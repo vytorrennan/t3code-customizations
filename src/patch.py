@@ -56,7 +56,7 @@ def patch_sidebar(source):
     thread = loop[1]
     sidebar = replace_once(sidebar, loop[0], loop[0].replace('{let ', '{if(__t3PersistedState.has(' + thread + ')){__t3PersistedMembers.push(' + thread + ');continue}let ', 1), 'membership grouping')
     classifier_return = match_one(r'return\{pinnedThreads:', sidebar, 'classification result')
-    sidebar = replace_once(sidebar, classifier_return[0], 'return{persistedThreads:__t3PersistedMembers,pinnedThreads:', 'classification result')
+    sidebar = replace_once(sidebar, classifier_return[0], 'return{persistedThreads:__t3PersistedState.sort(__t3PersistedMembers),pinnedThreads:', 'classification result')
     dependencies = match_one(r'snoozeNow:\w+\}\},\[([^\]]+)\]\)', sidebar, 'classification dependencies')
     sidebar = replace_once(sidebar, dependencies[0], dependencies[0].replace('},[', '},[__t3PersistedState,', 1), 'membership invalidation')
 
@@ -100,9 +100,18 @@ def patch_sidebar(source):
     empty_guard = f'{pinned}.length+{active}.length+{working}.length+{snoozed}.length+{settled}.length===0?'
     if empty_guard in sidebar:
         sidebar = replace_once(sidebar, empty_guard, '__t3PersistedRows.length+' + empty_guard, 'empty sidebar message')
-    fallback = ('const __t3PersistedDisabled={enabled:false,collapsed:false,members:[],has:()=>false};'
+    # Mark the native list item without changing its structure or animation keys.
+    native_row = match_one(r'let \w+=\(\w+,\w+,\w+\)=>.*?return\(0,\w+\.jsx\)\((\w+),\{thread:(\w+),variant:(\w+),', sidebar, 'native row props', re.S)
+    sidebar = replace_once(sidebar, native_row[0], native_row[0] + f'persistedRef:{native_row[3]}===`card`&&__t3PersistedState.has({native_row[2]})?JSON.stringify([{native_row[2]}.environmentId,{native_row[2]}.id]):void 0,', 'Persisted row marker prop')
+    source = source[:start] + sidebar + source[end:]
+    row_props = match_one(re.escape(native_row[1]) + r'=\(0,\w+\.memo\)\(function\((\w+)\)', source, 'native row component props')[1]
+    markers = list(re.finditer(r'"data-thread-item":(\w+),\.\.\.', source))
+    if len(markers) != 2:
+        raise UnsupportedBuild('Native card list item markers changed.')
+    source = re.sub(r'"data-thread-item":(\w+),\.\.\.', r'"data-thread-item":\1,"data-persisted-ref":' + row_props + '.persistedRef,...', source)
+    fallback = ('const __t3PersistedDisabled={enabled:false,collapsed:false,members:[],has:()=>false,sort:rows=>rows};'
                 'const __t3PersistedRuntime=globalThis.__t3Persisted??{use:()=>__t3PersistedDisabled,menu:items=>items,isAction:()=>false};\n')
-    return fallback + source[:start] + sidebar + source[end:]
+    return fallback + source
 
 
 class Archive:

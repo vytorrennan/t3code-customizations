@@ -22,6 +22,9 @@ test('menu actions commit membership before changing visibility and preserve nat
   await pending;
   assert.equal(addon.getSnapshot().has(thread), true);
   assert.equal(addon.menu(original, thread)[1].label, 'Remove from Persisted');
+  const second = { environmentId: 'a', id: 'c' };
+  await addon.handle('persisted:add', second);
+  assert.deepEqual(Array.from(addon.getSnapshot().sort([second, thread]), row => row.id), ['b', 'c']);
   await addon.handle('persisted:remove', thread);
   assert.equal(addon.getSnapshot().has(thread), false);
   assert.equal(original.length, 2);

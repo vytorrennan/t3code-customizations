@@ -42,3 +42,19 @@ test('invalid actions do not create or alter membership', t => {
   assert.throws(() => store.update({ type: 'delete' }));
   assert.equal(fs.existsSync(store.file), false);
 });
+
+test('manual order survives restart and keeps hidden members and their metadata', t => {
+  const directory = temporary(t);
+  const store = new Store(directory);
+  const refs = ['a', 'hidden', 'b'].map(threadId => ({ environmentId: 'machine-a', threadId }));
+  for (const ref of refs) store.update({ type: 'add', ref });
+  const originals = store.read().members;
+  store.update({ type: 'move', ref: refs[2], target: refs[0], position: 'before' });
+  assert.deepEqual(new Store(directory).read().members, [originals[2], originals[0], originals[1]]);
+  store.update({ type: 'move', ref: refs[2], target: refs[1], position: 'after' });
+  assert.deepEqual(store.read().members, originals);
+  const saved = fs.readFileSync(store.file, 'utf8');
+  assert.throws(() => store.update({ type: 'move', ref: refs[0], target: { ...refs[1], environmentId: 'missing' }, position: 'before' }));
+  assert.throws(() => store.update({ type: 'move', ref: refs[0], target: refs[1], position: 'invalid' }));
+  assert.equal(fs.readFileSync(store.file, 'utf8'), saved);
+});

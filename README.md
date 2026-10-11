@@ -9,10 +9,13 @@ The first customization adds a **Persisted** thread list to T3 Code's sidebar.
 - Right-click a thread and choose **Move to Persisted**.
 - Persisted sits at the top, beneath the sidebar search.
 - Expanded members use T3's full native thread cards.
+- Drag the grip beside a Persisted card to set its order. A line marks where it will land.
+- Focus a grip and use **Alt + Up/Down** to reorder with the keyboard.
+- New members go to the bottom. Existing members initially follow the order they were added. Activity does not change this order.
 - A divider marks the end of the expanded list.
 - Collapse and expansion reuse T3's native shelf animations and reduced-motion handling.
 - Right-click a member and choose **Remove from Persisted** to restore its normal group.
-- Membership and collapse state are saved separately from T3's thread database.
+- Membership, manual order, and collapse state are saved separately from T3's thread database.
 
 Moving a thread to Persisted does not settle, snooze, archive, move projects, or alter its conversation history. Existing threads work too. Project filters and search still apply. Archived and deleted threads remain governed by T3's normal lifecycle.
 
@@ -63,12 +66,12 @@ Then quit and reopen T3 Code.
 | Custom launcher | `~/.local/bin/t3code-nightly` |
 | Official-app bypass | `~/.local/bin/t3code-official-nightly` |
 | Installed source | `~/.local/share/t3code-persisted/src/` |
-| Membership and collapse state | `~/.local/share/t3code-persisted/data/membership.json` |
+| Membership, manual order, and collapse state | `~/.local/share/t3code-persisted/data/membership.json` |
 | Previous membership document | The adjacent `membership.json.bak` |
 | Original user desktop entries | `~/.local/share/t3code-persisted/backups/` |
 | Generated app copies | `~/.cache/t3code-persisted/builds/` |
 
-Membership records contain only environment IDs, thread IDs, and dates. The file is written atomically before thread visibility changes. If it becomes unreadable, the customization leaves it untouched and uses native grouping. Two recent generated app copies are retained, along with any copy still running.
+Membership records contain only environment IDs, thread IDs, and dates. Their array order is the saved list order. Reordering preserves members hidden by search and project filters. The file is written atomically before thread visibility changes. If it becomes unreadable, the customization leaves it untouched and uses native grouping. Two recent generated app copies are retained, along with any copy still running.
 
 ## Bypass or uninstall
 
@@ -106,7 +109,7 @@ With a graphical Linux session and an initialized local T3 database, exercise th
 python3 tests/native.py
 ```
 
-The native test uses isolated app directories and synthetic threads. It copies only database schema and migration bookkeeping from the local T3 database, never personal threads, messages, credentials, or provider sessions. It checks native menus, full cards, top placement, collapse animations, restart persistence, removal, and corrupt-storage fallback. Its fixtures, logs, and screenshot stay under `/tmp/t3-persisted-native-test/`.
+The native test uses isolated app directories and synthetic threads. It copies only database schema and migration bookkeeping from the local T3 database, never personal threads, messages, credentials, or provider sessions. It checks native menus, full cards, top placement, collapse animations, mouse dragging, saved order after a restart into a fresh app copy, removal, and corrupt-storage fallback. Its fixtures, logs, and screenshot stay under `/tmp/t3-persisted-native-test/`.
 
 ## Repository contents
 

@@ -50,6 +50,18 @@ class Store {
     if (operation.type === 'collapse') {
       if (typeof operation.collapsed !== 'boolean') throw new Error('Invalid collapse state.');
       document.collapsed = operation.collapsed;
+    } else if (operation.type === 'move') {
+      validateRef(operation.ref);
+      validateRef(operation.target);
+      if (!['before', 'after'].includes(operation.position)) throw new Error('Invalid move position.');
+      const indexOf = ref => document.members.findIndex(member => member.environmentId === ref.environmentId && member.threadId === ref.threadId);
+      const source = indexOf(operation.ref);
+      const target = indexOf(operation.target);
+      if (source < 0 || target < 0) throw new Error('The thread is no longer in Persisted.');
+      if (source !== target) {
+        const [member] = document.members.splice(source, 1);
+        document.members.splice(indexOf(operation.target) + (operation.position === 'after' ? 1 : 0), 0, member);
+      }
     } else if (operation.type === 'add' || operation.type === 'remove') {
       validateRef(operation.ref);
       const matches = member => member.environmentId === operation.ref.environmentId && member.threadId === operation.ref.threadId;
