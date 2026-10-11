@@ -1,6 +1,10 @@
-# Persisted for T3 Code Nightly
+# T3 Code Customizations
 
-An unofficial Linux customization that adds a **Persisted** thread list to T3 Code's sidebar. It uses the installed nightly without compiling T3 or maintaining a full source fork.
+Unofficial Linux customizations for T3 Code Nightly. This repository holds changes applied to the installed app without compiling T3 or maintaining a full source fork, and can grow to include more UI and workflow changes.
+
+## Persisted thread list
+
+The first customization adds a **Persisted** thread list to T3 Code's sidebar.
 
 - Right-click a thread and choose **Move to Persisted**.
 - Persisted sits at the top, beneath the sidebar search.
@@ -24,12 +28,14 @@ Tested on `0.0.46-nightly.20261011.2980`. This modifies internal integration poi
 ## Install
 
 ```sh
-git clone https://github.com/vytorrennan/t3code-persisted.git
-cd t3code-persisted
+git clone https://github.com/vytorrennan/t3code-customizations.git
+cd t3code-customizations
 python3 install.py
 ```
 
 The installer copies the customization into `~/.local/share/t3code-persisted`, creates user launchers, and backs up existing user desktop entries before updating them. It preserves existing Persisted membership and backups when run again.
+
+The installed directory keeps its original name so existing launchers and saved membership continue to work after the repository rename.
 
 Quit and reopen T3 Code once to activate it. Launching the customization while an old T3 instance is running only forwards to that existing instance.
 
