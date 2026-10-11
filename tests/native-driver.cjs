@@ -1,0 +1,96 @@
+const { app, Menu } = require('electron');
+const fs = require('node:fs');
+const path = require('node:path');
+
+let choice = null;
+let lastMenu = [];
+Menu.prototype.popup = function(options = {}) {
+  lastMenu = this.items.map(item => item.label);
+  const item = this.items.find(item => item.label === choice);
+  choice = null;
+  if (item) item.click(item, options.window, {});
+  if (options.callback) options.callback();
+};
+
+let done = false;
+app.on('browser-window-created', (_event, window) => {
+  window.webContents.on('did-finish-load', async () => {
+    if (!window.webContents.getURL().startsWith('t3code://app/') || done) return;
+    done = true;
+    const result = {};
+    const evaluate = code => window.webContents.executeJavaScript(code);
+    const animateToggle = () => evaluate(`new Promise(resolve => {
+      const start=performance.now();
+      document.querySelector('[data-testid=sidebar-persisted-shelf-toggle]').click();
+      const check=()=>{
+        const animations=document.getAnimations().filter(animation=>{
+          const target=animation.effect?.target;
+          return target && target.closest('[data-testid=sidebar-persisted-header]')===null && target.closest('ul[role=presentation]') && animation.playState==='running';
+        });
+        if(animations.length)resolve(animations.map(animation=>({duration:animation.effect.getTiming().duration,easing:animation.effect.getTiming().easing})));
+        else if(performance.now()-start>600)resolve([]);
+        else setTimeout(check,5);
+      };check();
+    })`);
+    const wait = async code => {
+      for (let count = 0; count < 100; count++) {
+        if (await evaluate(code)) return;
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
+      throw new Error('Timed out: ' + code);
+    };
+    try {
+      result.phase = process.env.T3_PERSISTED_TEST_PHASE;
+      if (result.phase === 'corrupt') {
+        await wait('!!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]")');
+        result.disabled = await evaluate('!globalThis.__t3Persisted.getSnapshot().enabled');
+        result.nativeCards = await evaluate('document.querySelectorAll("[data-testid=sidebar-row-card]").length');
+        result.headerAbsent = await evaluate('!document.querySelector("[data-testid=sidebar-persisted-header]")');
+        result.ok = result.disabled && result.nativeCards === 2 && result.headerAbsent;
+        fs.writeFileSync(path.join(process.env.T3_PERSISTED_TEST_OUTPUT, result.phase + '.json'), JSON.stringify(result, null, 2));
+        app.quit();
+        return;
+      }
+      await wait('!!document.querySelector("[data-testid=sidebar-persisted-shelf-toggle]")');
+      result.header = await evaluate('document.querySelector("[data-testid=sidebar-persisted-shelf-toggle]").textContent');
+      result.body = await evaluate('document.body.innerText.slice(0,1500)');
+      if (result.phase === 'add') {
+        await wait('!!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]") || !!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-slim]")');
+        result.nativeBefore = await evaluate('document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").outerHTML');
+        await evaluate('document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true,ctrlKey:true}))');
+        choice = 'Move to Persisted';
+        await evaluate('document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,clientX:80,clientY:160}))');
+        await wait('globalThis.__t3Persisted.getSnapshot().members.length===1');
+        result.menu = lastMenu;
+        result.headerAfter = await evaluate('document.querySelector("[data-testid=sidebar-persisted-shelf-toggle]").textContent');
+        result.persistedCard = await evaluate('document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").outerHTML');
+        result.collapseAnimations = await animateToggle();
+        if (!result.collapseAnimations.length) throw new Error('Persisted collapse did not use the native row animator.');
+        await wait('globalThis.__t3Persisted.getSnapshot().collapsed');
+        result.collapsedHidesCard = await evaluate('!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]")');
+      } else if (result.phase === 'restart') {
+        result.membershipSurvived = await evaluate('globalThis.__t3Persisted.getSnapshot().members.length===1');
+        result.collapseSurvived = await evaluate('globalThis.__t3Persisted.getSnapshot().collapsed');
+        result.expandAnimations = await animateToggle();
+        if (!result.expandAnimations.length) throw new Error('Persisted expansion did not use the native row animator.');
+        await wait('!!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]")');
+        result.rowCount = await evaluate('document.querySelectorAll("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").length');
+        result.top = await evaluate('document.querySelector("[data-testid=sidebar-persisted-header]").parentElement.firstElementChild.dataset.testid');
+        const image = await window.webContents.capturePage();
+        fs.writeFileSync(path.join(process.env.T3_PERSISTED_TEST_OUTPUT, 'persisted.png'), image.toPNG());
+        choice = 'Remove from Persisted';
+        await evaluate('document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,clientX:80,clientY:160}))');
+        await wait('globalThis.__t3Persisted.getSnapshot().members.length===0');
+        result.removeMenu = lastMenu;
+        result.restoredNativeCard = await evaluate('!!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]")');
+      }
+      result.ok = true;
+    } catch (error) {
+      result.error = String(error);
+      result.body = await evaluate('document.body.innerText.slice(0,2000)').catch(() => 'unavailable');
+      result.testIds = await evaluate('Array.from(document.querySelectorAll("[data-testid]")).map(e=>e.dataset.testid)').catch(() => []);
+    }
+    fs.writeFileSync(path.join(process.env.T3_PERSISTED_TEST_OUTPUT, result.phase + '.json'), JSON.stringify(result, null, 2));
+    app.quit();
+  });
+});

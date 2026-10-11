@@ -1,0 +1,22 @@
+# Local membership and desktop-entry backups must never be published.
+/data/
+/backups/
+membership.json*
+
+# Generated application copies, fixtures and diagnostics.
+/builds/
+/dist/
+/test-output/
+*.sqlite
+*.sqlite-*
+*.db
+*.log
+*.ndjson
+*.png
+
+# Language tooling and local configuration.
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
