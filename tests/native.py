@@ -40,7 +40,7 @@ if not database.exists():
     target.close()
 (state/'client-settings.json').write_text(json.dumps({'onboardingCompletedAt': '2026-10-11T12:00:00.000Z', 'legacySidebarEnabled': False, 'sidebarWorkingShelfEnabled': False, 'panelAnimationDurationMs': 0}))
 (state/'desktop-settings.json').write_text(json.dumps({'localEnvironmentEnabled': True,'mainWindowBounds':{'x':0,'y':0,'width':1100,'height':800}}))
-for phase in ['add', 'restart', 'corrupt']:
+for phase in ['native', 'add', 'restart', 'corrupt']:
     if phase == 'corrupt':
         (OUTPUT/'membership/membership.json').write_text('{broken-fixture')
     environment = os.environ.copy()
@@ -70,4 +70,4 @@ for (payload,) in target.execute('select payload_json from orchestration_v2_proj
     assert thread['settledOverride'] is None and thread['snoozedUntil'] is None and thread['archivedAt'] is None
 assert (OUTPUT/'membership/membership.json').read_text() == '{broken-fixture'
 target.close()
-print('Native thread state unchanged; corrupt membership preserved.', flush=True)
+print('Native thread lifecycle unchanged; corrupt membership preserved.', flush=True)

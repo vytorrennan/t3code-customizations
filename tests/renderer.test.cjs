@@ -36,3 +36,29 @@ test('missing bridge leaves all native threads visible', () => {
   assert.equal(context.__t3Persisted.getSnapshot().enabled, false);
   assert.equal(context.__t3Persisted.getSnapshot().has({ environmentId: 'a', id: 'b' }), false);
 });
+
+test('native drag targets keep shelves separate and use native array-move order', () => {
+  const context = vm.createContext({ console });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/renderer.js'), 'utf8'), context);
+  const addon = context.__t3Persisted;
+  const persisted = ['p1', 'p2', 'p3'].map(key => ({ kind: 'thread', key, section: 'persisted' }));
+  const native = ['n1', 'n2'].map(key => ({ kind: 'thread', key, section: 'active' }));
+  const items = [{ kind: 'marker', marker: 'persisted-header' }, ...persisted,
+    { kind: 'marker', marker: 'persisted-divider' }, ...native];
+  let nativeCalls = 0;
+  const resolver = (rows, active, over) => {
+    nativeCalls++;
+    assert.deepEqual(Array.from(rows, row => row.key), ['n1', 'n2']);
+    assert.equal(active, 'n2');
+    assert.equal(over, 'n1');
+    return 'native-result';
+  };
+  assert.deepEqual(Array.from(addon.target(resolver, items, 'p1', 'p3').persistedOrder), ['p2', 'p3', 'p1']);
+  assert.deepEqual(Array.from(addon.target(resolver, items, 'p3', 'p1').persistedOrder), ['p3', 'p1', 'p2']);
+  assert.equal(addon.target(resolver, items, 'p1', 'n1'), null);
+  assert.equal(addon.target(resolver, items, 'n1', 'p1'), null);
+  assert.equal(addon.target(resolver, items, 'n1', 'sidebar-marker-persisted-divider'), null);
+  assert.equal(nativeCalls, 0);
+  assert.equal(addon.target(resolver, items, 'n2', 'n1'), 'native-result');
+  assert.equal(nativeCalls, 1);
+});

@@ -9,8 +9,7 @@ The first customization adds a **Persisted** thread list to T3 Code's sidebar.
 - Right-click a thread and choose **Move to Persisted**.
 - Persisted sits at the top, beneath the sidebar search.
 - Expanded members use T3's full native thread cards.
-- Drag the grip beside a Persisted card to set its order. A line marks where it will land.
-- Focus a grip and use **Alt + Up/Down** to reorder with the keyboard.
+- Drag a Persisted card just like a normal T3 thread to set its order. It uses the native drag sensor, card preview, collision detection, and row animations.
 - New members go to the bottom. Existing members initially follow the order they were added. Activity does not change this order.
 - A divider marks the end of the expanded list.
 - Collapse and expansion reuse T3's native shelf animations and reduced-motion handling.
@@ -109,7 +108,7 @@ With a graphical Linux session and an initialized local T3 database, exercise th
 python3 tests/native.py
 ```
 
-The native test uses isolated app directories and synthetic threads. It copies only database schema and migration bookkeeping from the local T3 database, never personal threads, messages, credentials, or provider sessions. It checks native menus, full cards, top placement, collapse animations, mouse dragging, saved order after a restart into a fresh app copy, removal, and corrupt-storage fallback. Its fixtures, logs, and screenshot stay under `/tmp/t3-persisted-native-test/`.
+The native test uses isolated app directories and synthetic threads. It copies only database schema and migration bookkeeping from the local T3 database, never personal threads, messages, credentials, or provider sessions. It checks native menus, full cards, top placement, collapse animations, native card dragging and preview, cancellation, saved order after a restart into a fresh app copy, removal, and corrupt-storage fallback. Its fixtures, logs, and screenshot stay under `/tmp/t3-persisted-native-test/`.
 
 ## Repository contents
 

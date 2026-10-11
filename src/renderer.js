@@ -17,89 +17,30 @@
     for (const listener of listeners) listener();
   }
 
-  const refFromKey = value => {
-    const [environmentId, threadId] = JSON.parse(value);
-    return { environmentId, threadId };
-  };
-
-  function drag(event, row) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const source = row.dataset.persistedRef;
-    const startY = event.clientY;
-    let target, position, moved = false;
-    const indicator = document.createElement('div');
-    Object.assign(indicator.style, { position: 'fixed', height: '2px', background: 'var(--primary)', pointerEvents: 'none', zIndex: '99999' });
-    const move = event => {
-      if (Math.abs(event.clientY - startY) > 4) moved = true;
-      target = undefined;
-      indicator.remove();
-      if (!moved || !row.isConnected) return;
-      const rows = [...document.querySelectorAll('li[data-persisted-ref]')];
-      const hovered = rows.find(candidate => {
-        const box = candidate.getBoundingClientRect();
-        return event.clientX >= box.left && event.clientX <= box.right && event.clientY >= box.top && event.clientY <= box.bottom;
-      });
-      if (!hovered || hovered.dataset.persistedRef === source) return;
-      target = hovered.dataset.persistedRef;
-      const box = hovered.getBoundingClientRect();
-      position = event.clientY < box.top + box.height / 2 ? 'before' : 'after';
-      Object.assign(indicator.style, { left: box.left + 'px', width: box.width + 'px', top: (position === 'before' ? box.top : box.bottom) + 'px' });
-      document.body.appendChild(indicator);
-    };
-    const finish = event => {
-      if (event.type === 'pointerup') move(event);
-      document.removeEventListener('pointermove', move, true);
-      document.removeEventListener('pointerup', finish, true);
-      document.removeEventListener('pointercancel', finish, true);
-      window.removeEventListener('blur', cancel);
-      document.removeEventListener('keydown', escape, true);
-      indicator.remove();
-      if (event.type === 'pointerup' && target && snapshot.has(refFromKey(source)) && snapshot.has(refFromKey(target))) {
-        update({ type: 'move', ref: refFromKey(source), target: refFromKey(target), position });
-      }
-    };
-    const cancel = () => finish({ type: 'cancel' });
-    const escape = event => { if (event.key === 'Escape') { event.preventDefault(); cancel(); } };
-    document.addEventListener('pointermove', move, true);
-    document.addEventListener('pointerup', finish, true);
-    document.addEventListener('pointercancel', finish, true);
-    document.addEventListener('keydown', escape, true);
-    window.addEventListener('blur', cancel);
+  // Use the native sidebar's array-move target semantics within this shelf.
+  // Native groups retain their original target resolver and database operations.
+  function target(nativeTarget, items, active, over) {
+    const source = items.find(item => item.kind === 'thread' && item.key === active);
+    const destination = items.find(item => item.kind === 'thread' && item.key === over);
+    if (source?.section === 'persisted') {
+      if (destination?.section !== 'persisted') return null;
+      const order = items.filter(item => item.kind === 'thread' && item.section === 'persisted').map(item => item.key);
+      const from = order.indexOf(active), to = order.indexOf(over);
+      order.splice(to, 0, ...order.splice(from, 1));
+      return { section: 'persisted', persistedOrder: order };
+    }
+    if (destination?.section === 'persisted' || items.some(item => item.marker?.startsWith('persisted-') && over === 'sidebar-marker-' + item.marker)) return null;
+    return nativeTarget(items.filter(item => item.section !== 'persisted' && !item.marker?.startsWith('persisted-')), active, over);
   }
 
-  function attachHandles() {
-    for (const handle of document.querySelectorAll('[data-persisted-drag-handle]')) {
-      if (!handle.parentElement.hasAttribute('data-persisted-ref')) {
-        handle.parentElement.style.paddingRight = '';
-        handle.parentElement.style.position = '';
-        handle.remove();
-      }
-    }
-    for (const row of document.querySelectorAll('li[data-persisted-ref]')) {
-      if (row.querySelector('[data-persisted-drag-handle]')) continue;
-      const handle = document.createElement('button');
-      handle.type = 'button';
-      handle.dataset.persistedDragHandle = '';
-      handle.textContent = '⠿';
-      handle.title = 'Drag to reorder. Alt + Up or Down also moves this thread.';
-      handle.setAttribute('aria-label', 'Reorder Persisted thread');
-      Object.assign(row.style, { position: 'relative', paddingRight: '20px' });
-      Object.assign(handle.style, { position: 'absolute', right: '0', top: '30px', width: '20px', height: '22px', cursor: 'grab', touchAction: 'none', color: 'var(--sidebar-muted-foreground)', background: 'transparent', border: 'none', fontSize: '18px' });
-      handle.addEventListener('pointerdown', event => drag(event, row));
-      handle.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); });
-      handle.addEventListener('contextmenu', event => event.stopPropagation());
-      handle.addEventListener('keydown', event => {
-        if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
-        event.preventDefault();
-        event.stopPropagation();
-        const rows = [...document.querySelectorAll('li[data-persisted-ref]')];
-        const target = rows[rows.indexOf(row) + (event.key === 'ArrowUp' ? -1 : 1)];
-        if (target) update({ type: 'move', ref: refFromKey(row.dataset.persistedRef), target: refFromKey(target.dataset.persistedRef), position: event.key === 'ArrowUp' ? 'before' : 'after' });
-      });
-      row.appendChild(handle);
-    }
+  function drop(event, items, threads) {
+    const active = String(event.active.id), over = event.over && String(event.over.id);
+    const source = threads.get(active), destination = threads.get(over);
+    const rows = items.filter(item => item.kind === 'thread' && item.section === 'persisted');
+    const from = rows.findIndex(item => item.key === active), to = rows.findIndex(item => item.key === over);
+    if (!source || !destination || from < 0 || to < 0 || from === to) return;
+    return update({ type: 'move', ref: { environmentId: source.environmentId, threadId: source.id },
+      target: { environmentId: destination.environmentId, threadId: destination.id }, position: from < to ? 'after' : 'before' });
   }
 
   function notify(message) {
@@ -141,13 +82,12 @@
   }
 
   globalThis.__t3Persisted = {
-    use: React => {
-      React.useLayoutEffect(attachHandles);
-      return React.useSyncExternalStore(listener => {
+    use: React => React.useSyncExternalStore(listener => {
       listeners.add(listener);
       return () => listeners.delete(listener);
-      }, () => snapshot, () => snapshot);
-    },
+    }, () => snapshot, () => snapshot),
+    target,
+    drop,
     menu: (items, thread) => {
       if (!snapshot.enabled) return items;
       const entry = snapshot.has(thread)

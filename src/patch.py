@@ -47,7 +47,7 @@ def patch_sidebar(source):
     sidebar = source[start:end]
     header = match_one(r'^function (\w+)\(\)\{', sidebar, 'sidebar function')
     groups = match_one(r'\{pinnedThreads:(\w+),draggableThreadKeys:(\w+),activeReorderableThreadKeys:(\w+),activeThreads:(\w+),workingThreads:(\w+),snoozedThreads:(\w+),settledThreads:(\w+),snoozeNow:(\w+)\}=\(0,(\w+)\.useMemo\)', sidebar, 'thread classifier')
-    pinned, _, _, active, working, snoozed, settled, _, react = groups.groups()
+    pinned, draggable, _, active, working, snoozed, settled, _, react = groups.groups()
     sidebar = replace_once(sidebar, header[0], header[0] + f'let __t3PersistedState=__t3PersistedRuntime.use({react});', 'Persisted subscription')
     sidebar = replace_once(sidebar, groups[0], groups[0].replace('{pinnedThreads:', '{persistedThreads:__t3PersistedRows,pinnedThreads:', 1), 'Persisted rows binding')
     classifier = match_one(r'\(0,' + react + r'\.useMemo\)\(\(\)=>\{let (\w+)=new Date\(\)\.toISOString\(\),', sidebar, 'classification initialization')
@@ -86,9 +86,18 @@ def patch_sidebar(source):
         f'"data-testid":`sidebar-persisted-shelf-toggle`,children:`Persisted (${{__t3PersistedRows.length}})`}})}},`persisted-header`)'
     )
     empty = f'(0,{jsx}.jsx)(`li`,{{className:`list-none px-2 py-2 text-xs text-sidebar-muted-foreground`,children:`Right-click a thread to move it here.`}},`persisted-empty`)'
-    divider = f'(0,{jsx}.jsx)(`li`,{{role:`separator`,"aria-orientation":`horizontal`,"data-testid":`sidebar-persisted-end`,className:`mx-2.5 my-2 h-px shrink-0 list-none bg-sidebar-foreground/25`}},`persisted-end`)'
-    insertion = f'];if(__t3PersistedState.enabled){{{accumulator}.unshift({persisted_header},...(__t3PersistedState.collapsed?[]:[...(__t3PersistedRows.length?__t3PersistedRows.map(thread=>{renderer}(thread,`persisted`,null)):[{empty}]),{divider}]))}}for(let'
+    sortable = match_one(r'(\w+)=\((\w+),(\w+)\)=>\{let (\w+)=\w+\(\w+\(\2.environmentId,\2.id\)\);return\(0,' + jsx + r'\.jsx\)\((\w+),\{id:\4,contextDrag:', sidebar, 'native sortable row factory')
+    sortable_factory, _, section, sortable_key, _ = sortable.groups()
+    disabled = f'||!{draggable}.has({sortable_key})'
+    sidebar = replace_once(sidebar, disabled, f'||{section}!==`persisted`&&!{draggable}.has({sortable_key})', 'Persisted native dragging')
+    marker_component = match_one(r'function (\w+)\((\w+)\)\{(?:(?!function ).)*?\2.marker.endsWith\(`-placeholder`\)', source, 'native sortable marker', re.S)[1]
+    empty = empty.replace('(`li`,{', f'({marker_component},{{marker:`persisted-placeholder`,', 1)
+    persisted_header = persisted_header.replace('(`li`,{', f'({marker_component},{{marker:`persisted-header`,', 1)
+    # Keep the separator spacing inside its measured sortable rectangle.
+    divider = f'(0,{jsx}.jsx)({marker_component},{{marker:`persisted-divider`,"data-testid":`sidebar-persisted-end`,className:`mx-2.5 h-4 shrink-0 list-none flex items-center`,children:(0,{jsx}.jsx)(`div`,{{className:`h-px w-full bg-sidebar-foreground/25`}})}},`persisted-end`)'
+    insertion = f'];if(__t3PersistedState.enabled){{{accumulator}.unshift({persisted_header},...(__t3PersistedState.collapsed?[]:[...(__t3PersistedRows.length?__t3PersistedRows.map(thread=>{sortable_factory}(thread,`persisted`)):[{empty}]),{divider}]))}}for(let'
     sidebar = replace_once(sidebar, output[0], output[0].replace('];for(let', insertion, 1), 'Persisted shelf at top')
+    sidebar, source = patch_native_drag(sidebar, source, react, pinned)
 
     menu = match_one(r'(\w+)=await (\w+)\(\(\)=>(\w+)\.contextMenu.show\(((\w+)\(\{canOperate:.*?branch:(\w+)\.branch.*?snoozePresets:\w+\}\)),(\w+)\)\);', sidebar, 'single-thread native menu', re.S)
     result, attempt, platform, items, builder, menu_thread, position = menu.groups()
@@ -103,6 +112,8 @@ def patch_sidebar(source):
     # Mark the native list item without changing its structure or animation keys.
     native_row = match_one(r'let \w+=\(\w+,\w+,\w+\)=>.*?return\(0,\w+\.jsx\)\((\w+),\{thread:(\w+),variant:(\w+),', sidebar, 'native row props', re.S)
     sidebar = replace_once(sidebar, native_row[0], native_row[0] + f'persistedRef:{native_row[3]}===`card`&&__t3PersistedState.has({native_row[2]})?JSON.stringify([{native_row[2]}.environmentId,{native_row[2]}.id]):void 0,', 'Persisted row marker prop')
+    start = source.index('function ' + header[1] + '(){')
+    end = source.find('function ', source.index('snoozed-shelf-header', start))
     source = source[:start] + sidebar + source[end:]
     row_props = match_one(re.escape(native_row[1]) + r'=\(0,\w+\.memo\)\(function\((\w+)\)', source, 'native row component props')[1]
     markers = list(re.finditer(r'"data-thread-item":(\w+),\.\.\.', source))
@@ -110,8 +121,73 @@ def patch_sidebar(source):
         raise UnsupportedBuild('Native card list item markers changed.')
     source = re.sub(r'"data-thread-item":(\w+),\.\.\.', r'"data-thread-item":\1,"data-persisted-ref":' + row_props + '.persistedRef,...', source)
     fallback = ('const __t3PersistedDisabled={enabled:false,collapsed:false,members:[],has:()=>false,sort:rows=>rows};'
-                'const __t3PersistedRuntime=globalThis.__t3Persisted??{use:()=>__t3PersistedDisabled,menu:items=>items,isAction:()=>false};\n')
+                'const __t3PersistedRuntime=globalThis.__t3Persisted??{use:()=>__t3PersistedDisabled,menu:items=>items,isAction:()=>false,target:(native,items,active,over)=>native(items,active,over)};\n')
     return fallback + source
+
+
+def patch_native_drag(sidebar, source, react, pinned):
+    section_map = match_one(r'(\w+)=\(0,' + react + r'\.useMemo\)\(\(\)=>\{let (\w+)=new Map,(\w+)=\(\w+,\w+\)=>.*?return \3\(' + pinned + r',`pinned`\).*?\},\[([^\]]+)\]\)', sidebar, 'native drag section map', re.S)
+    map_name, _, add, _ = section_map.groups()
+    replacement = section_map[0].replace('return ', f'return {add}(__t3PersistedRows,`persisted`),', 1).replace('},[', '},[__t3PersistedRows,', 1)
+    sidebar = replace_once(sidebar, section_map[0], replacement, 'Persisted drag section')
+    items = match_one(r'(\w+)=\(0,' + react + r'\.useMemo\)\(\(\)=>\{let (\w+)=\(\w+,\w+\)=>\w+.map\(\w+=>\(\{kind:`thread`,key:.*?\},\[([^\]]+)\]\)', sidebar, 'native sortable items', re.S)
+    item_name, make_items, _ = items.groups()
+    replacement = items[0].replace(f'if({pinned}.length+', f'if(__t3PersistedRows.length+{pinned}.length+', 1)
+    replacement = replacement.replace('let t=[{kind:`marker`,marker:`pinned-header`}]', f'let t=[...(__t3PersistedState.enabled?[{{kind:`marker`,marker:`persisted-header`}},...(__t3PersistedState.collapsed?[]:[...(__t3PersistedRows.length?{make_items}(__t3PersistedRows,`persisted`):[{{kind:`marker`,marker:`persisted-placeholder`}}]),{{kind:`marker`,marker:`persisted-divider`}}])]:[]),{{kind:`marker`,marker:`pinned-header`}}]')
+    if replacement == items[0] or 'marker:`persisted-header`' not in replacement:
+        raise UnsupportedBuild('Native sortable item list changed.')
+    replacement = replacement.replace('},[', '},[__t3PersistedRows,__t3PersistedState.collapsed,__t3PersistedState.enabled,', 1)
+    sidebar = replace_once(sidebar, items[0], replacement, 'Persisted sortable items')
+    row_loop = f'for(let e of {item_name}){{if(e.kind===`thread`){{'
+    sidebar = replace_once(sidebar, row_loop, row_loop + 'if(e.section===`persisted`)continue;', 'Persisted rows rendered once')
+    # The sensor otherwise clamps cards below the Pinned heading.
+    clamp = match_one(r'if\((\w+)&&(\w+)\)\{let \w+=\w+.getBoundingClientRect\(\).*?else (\w+).current=0;', sidebar, 'native drag upper boundary', re.S)
+    section = match_one(r'let (\w+)=' + map_name + r'\.get\(\w+\);if\(\1===void 0\)return;', sidebar, 'native drag source section')[1]
+    sidebar = replace_once(sidebar, clamp[0], f'if({section}===`persisted`){clamp[3]}.current=0;else ' + clamp[0], 'Persisted drag bounds')
+    collision = match_one(r'return (\w+)===void 0\?(\w+)\(\(\)=>!1\):\2\(\w+=>\{let (\w+)=(\w+)\(' + item_name + r',(\w+),\w+\);', sidebar, 'native collision policy')
+    thread, collision_factory, target, resolver, active_key = collision.groups()
+    source_section = match_one(r'if\(\w+===void 0\|\|(\w+)===void 0\)return ' + collision_factory, sidebar, 'native collision source section')[1]
+    allowed = f'if({source_section}===`persisted`)return {collision_factory}(id=>__t3PersistedRuntime.target({resolver},{item_name},{active_key},id)!==null,{{items:{item_name}}});'
+    sidebar = replace_once(sidebar, collision[0], allowed + collision[0], 'Persisted collision policy')
+    drag_end = match_one(r'let (\w+)=String\(\w+.active.id\),(\w+)=' + map_name + r'\.get\(\1\),(\w+)=\w+.over===null\?null:' + resolver + r'\(' + item_name + r',\1,String\(\w+.over.id\)\),(\w+)=(\w+)\.get\(\1\);if\(\2===void 0\|\|\3===null\|\|\4===void 0\)return;', sidebar, 'native drop handler')
+    active_id, section, _, _, thread_map = drag_end.groups()
+    event = match_one(r'let \w+=String\((\w+).active.id\),' + section + '=' + map_name, drag_end[0], 'native drop event')[1]
+    sidebar = replace_once(sidebar, drag_end[0], drag_end[0] + f'if({section}===`persisted`){{__t3PersistedRuntime.drop({event},{item_name},{thread_map});return}}', 'Persisted drop persistence')
+    # All target lookups use the native resolver outside the custom shelf.
+    calls = list(re.finditer(re.escape(resolver) + r'\(' + item_name + r',([^,]+),(String\(\w+.over.id\)|\w+)\)', sidebar))
+    if len(calls) != 3:
+        raise UnsupportedBuild('Native sidebar target lookups changed.')
+    sidebar = re.sub(re.escape(resolver) + r'\(' + item_name + r',([^,]+),(String\(\w+.over.id\)|\w+)\)', lambda m: f'__t3PersistedRuntime.target({resolver},{item_name},{m[1]},{m[2]})', sidebar)
+
+    strategy = match_one(r'\(\)=>((\w+)\(\{items:' + item_name + r',enabled:)', sidebar, 'native sort strategy')[2]
+    strategy_start = source.index('function ' + strategy + '(')
+    strategy_end = source.index('}function ', strategy_start) + 1
+    body = source[strategy_start:strategy_end]
+    lookup = match_one(re.escape(resolver) + r'\((\w+),(\w+).key,(\w+)\((\w+)\)\)', body, 'native strategy target')
+    body = replace_once(body, lookup[0], f'__t3PersistedRuntime.target({resolver},{lookup[1]},{lookup[2]}.key,{lookup[3]}({lookup[4]}))', 'Persisted strategy target')
+    body = replace_once(body, '={pinned:[],active:[],working:[],snoozed:[],settled:[]}', '={persisted:[],pinned:[],active:[],working:[],snoozed:[],settled:[]}', 'Persisted layout group')
+    cards = list(re.finditer(r'(\w+).section===`pinned`\|\|\1.section===`active`\|\|\1.section===`working`', body))
+    if len(cards) != 2:
+        raise UnsupportedBuild('Native card height classifications changed.')
+    body = re.sub(r'(\w+).section===`pinned`\|\|\1.section===`active`\|\|\1.section===`working`', lambda m: m[1] + '.section===`persisted`||' + m[0], body)
+    order = match_one(r'(\w+).section===`pinned`\?\1.pinnedOrder:', body, 'native layout order')
+    body = replace_once(body, order[0], f'{order[1]}.section===`persisted`?{order[1]}.persistedOrder:' + order[0], 'Persisted preview order')
+    output = match_one(r'(\w+)\(`pinned-header`\),(\w+).push\(\.\.\.(\w+).pinned\)', body, 'native preview layout output')
+    append_marker, result, layout = output.groups()
+    items_variable = lookup[1]
+    prefix = f'{items_variable}.some(e=>e.marker===`persisted-header`)&&{append_marker}(`persisted-header`),{items_variable}.some(e=>e.marker===`persisted-placeholder`)&&{append_marker}(`persisted-placeholder`),{result}.push(...{layout}.persisted),{items_variable}.some(e=>e.marker===`persisted-divider`)&&{append_marker}(`persisted-divider`),'
+    body = replace_once(body, output[0], prefix + output[0], 'Persisted preview placement')
+    marker_height = match_one(r'return (\w+).kind===`marker`&&\(\1.marker===`pinned-header`', body, 'native marker heights')
+    marker = marker_height[1]
+    original_rect = match_one(r'(\w+)=\w+===void 0\?void 0:\w+\[\w+\],\w+=\w+.kind===`thread`', body, 'native marker rectangle')[1]
+    body = replace_once(body, marker_height[0], f'return {marker}.kind===`marker`&&{marker}.marker.startsWith(`persisted-`)?{original_rect}?.height??0:' + marker_height[0][7:], 'Persisted measured marker heights')
+    source = source[:strategy_start] + body + source[strategy_end:]
+    # Skip the native Pinned/Active boundary preference for custom shelf drags.
+    boundary = match_one(r'if\((\w+)&&(\w+)&&(\w+)\?\.kind===`thread`&&(\w+)\)\{', source, 'native collision boundary preference')
+    source = replace_once(source, boundary[0], boundary[0].replace('){', f'&&{boundary[3]}.section!==`persisted`){{'), 'Persisted collision boundary isolation')
+    cached_target = match_one(re.escape(resolver) + r'\((\w+),String\((\w+).active.id\),(\w+)\)\?\.section', source, 'native cached collision section')
+    source = replace_once(source, cached_target[0], f'__t3PersistedRuntime.target({resolver},{cached_target[1]},String({cached_target[2]}.active.id),{cached_target[3]})?.section', 'Persisted cached collision isolation')
+    return sidebar, source
 
 
 class Archive:

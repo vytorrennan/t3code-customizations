@@ -32,6 +32,25 @@ app.on('browser-window-created', (_event, window) => {
         else setTimeout(check,5);
       };check();
     })`);
+    const mouseDrag = async (selector, cancel = false) => {
+      const points = await evaluate(`(() => {
+        const rows=[...document.querySelectorAll(${JSON.stringify(selector)})];
+        const source=rows[1].querySelector('[data-testid=sidebar-row-card]').getBoundingClientRect();
+        const target=rows[0].getBoundingClientRect();
+        return {x:Math.round(source.left+source.width/2),y:Math.round(source.top+source.height/2),targetX:Math.round(target.left+target.width/2),targetY:Math.round(target.top+target.height/2)};
+      })()`);
+      window.webContents.sendInputEvent({type:'mouseMove',x:points.x,y:points.y});
+      window.webContents.sendInputEvent({type:'mouseDown',x:points.x,y:points.y,button:'left',clickCount:1});
+      await new Promise(resolve=>setTimeout(resolve,60));
+      window.webContents.sendInputEvent({type:'mouseMove',x:points.targetX,y:points.targetY,modifiers:['leftButtonDown']});
+      await new Promise(resolve=>setTimeout(resolve,180));
+      if(cancel){
+        window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
+        window.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
+      }
+      window.webContents.sendInputEvent({type:'mouseUp',x:points.targetX,y:points.targetY,button:'left',clickCount:1});
+      await new Promise(resolve=>setTimeout(resolve,250));
+    };
     const wait = async code => {
       for (let count = 0; count < 100; count++) {
         if (await evaluate(code)) return;
@@ -54,7 +73,16 @@ app.on('browser-window-created', (_event, window) => {
       await wait('!!document.querySelector("[data-testid=sidebar-persisted-shelf-toggle]")');
       result.header = await evaluate('document.querySelector("[data-testid=sidebar-persisted-shelf-toggle]").textContent');
       result.body = await evaluate('document.body.innerText.slice(0,1500)');
-      if (result.phase === 'add') {
+      if (result.phase === 'native') {
+        await wait('document.querySelectorAll("li[data-thread-item] [data-testid=sidebar-row-card]").length===2');
+        await new Promise(resolve=>setTimeout(resolve,250));
+        const before = await evaluate('[...document.querySelectorAll("li[data-thread-item]")].map(row=>row.dataset.threadItem)');
+        await mouseDrag('li[data-thread-item]');
+        const after = await evaluate('[...document.querySelectorAll("li[data-thread-item]")].map(row=>row.dataset.threadItem)');
+        result.nativeReordered = before[0]===after[1] && before[1]===after[0];
+        result.membershipUnchanged = await evaluate('globalThis.__t3Persisted.getSnapshot().members.length===0');
+        if(!result.nativeReordered || !result.membershipUnchanged) throw new Error('Native thread ordering regressed.');
+      } else if (result.phase === 'add') {
         await wait('!!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]") || !!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-slim]")');
         result.nativeBefore = await evaluate('document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").outerHTML');
         await evaluate('document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").dispatchEvent(new MouseEvent("click",{bubbles:true,cancelable:true,ctrlKey:true}))');
@@ -66,22 +94,25 @@ app.on('browser-window-created', (_event, window) => {
         result.persistedCard = await evaluate('document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").outerHTML');
         choice = 'Move to Persisted';
         await evaluate('document.querySelector("li[data-thread-item*=persisted-test-thread-2] [data-testid=sidebar-row-card]").dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,clientX:80,clientY:260}))');
-        await wait('document.querySelectorAll("[data-persisted-drag-handle]").length===2');
+        await wait('document.querySelectorAll("li[data-persisted-ref][data-thread-item]").length===2');
         await new Promise(resolve => setTimeout(resolve, 250));
         const coordinates = await evaluate(`(() => {
-          const rows=[...document.querySelectorAll('li[data-persisted-ref]')];
-          const source=rows[1].querySelector('[data-persisted-drag-handle]').getBoundingClientRect();
+          const rows=[...document.querySelectorAll('li[data-persisted-ref][data-thread-item]')];
+          const source=rows[1].querySelector('[data-testid=sidebar-row-card]').getBoundingClientRect();
           const target=rows[0].getBoundingClientRect();
-          return {x:Math.round(source.left+source.width/2),y:Math.round(source.top+source.height/2),targetX:Math.round(target.left+target.width/2),targetY:Math.round(target.top+5)};
+          return {x:Math.round(source.left+source.width/2),y:Math.round(source.top+source.height/2),targetX:Math.round(target.left+target.width/2),targetY:Math.round(target.top+target.height/2)};
         })()`);
         window.webContents.sendInputEvent({type:'mouseMove',x:coordinates.x,y:coordinates.y});
         window.webContents.sendInputEvent({type:'mouseDown',x:coordinates.x,y:coordinates.y,button:'left',clickCount:1});
         await new Promise(resolve => setTimeout(resolve, 60));
-        window.webContents.sendInputEvent({type:'mouseMove',x:coordinates.targetX,y:coordinates.targetY});
-        await new Promise(resolve => setTimeout(resolve, 60));
+        window.webContents.sendInputEvent({type:'mouseMove',x:coordinates.targetX,y:coordinates.targetY,modifiers:['leftButtonDown']});
+        await new Promise(resolve => setTimeout(resolve, 180));
+        result.nativePreview = await evaluate('[...document.querySelectorAll("li[data-persisted-ref][data-thread-item]")].some(row=>row.style.transform.includes("translate"))');
+        result.notSavedUntilDrop = await evaluate('globalThis.__t3Persisted.getSnapshot().members[0].threadId==="persisted-test-thread-1"');
+        if (!result.nativePreview || !result.notSavedUntilDrop) throw new Error('Native drag preview did not move cards before committing the drop.');
         window.webContents.sendInputEvent({type:'mouseUp',x:coordinates.targetX,y:coordinates.targetY,button:'left',clickCount:1});
         await wait('globalThis.__t3Persisted.getSnapshot().members[0].threadId==="persisted-test-thread-2"');
-        result.dragReordered = await evaluate('JSON.parse(document.querySelector("li[data-persisted-ref]").dataset.persistedRef)[1]==="persisted-test-thread-2"');
+        result.dragReordered = await evaluate('JSON.parse(document.querySelector("li[data-persisted-ref][data-thread-item]").dataset.persistedRef)[1]==="persisted-test-thread-2"');
         if (!result.dragReordered) throw new Error('Drag saved order but did not reorder native cards.');
         result.collapseAnimations = await animateToggle();
         if (!result.collapseAnimations.length) throw new Error('Persisted collapse did not use the native row animator.');
@@ -95,13 +126,14 @@ app.on('browser-window-created', (_event, window) => {
         await wait('!!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]")');
         result.rowCount = await evaluate('document.querySelectorAll("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").length');
         result.top = await evaluate('document.querySelector("[data-testid=sidebar-persisted-header]").parentElement.firstElementChild.dataset.testid');
-        result.orderSurvived = await evaluate('JSON.parse(document.querySelector("li[data-persisted-ref]").dataset.persistedRef)[1]==="persisted-test-thread-2"');
+        result.orderSurvived = await evaluate('JSON.parse(document.querySelector("li[data-persisted-ref][data-thread-item]").dataset.persistedRef)[1]==="persisted-test-thread-2"');
         if (!result.membershipSurvived || !result.orderSurvived) throw new Error('Manual order did not survive restart.');
-        await evaluate('document.querySelectorAll("[data-persisted-drag-handle]")[1].dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowUp",altKey:true,bubbles:true,cancelable:true}))');
-        await wait('globalThis.__t3Persisted.getSnapshot().members[0].threadId==="persisted-test-thread-1"');
-        await evaluate('document.querySelector("[data-persisted-drag-handle]").dispatchEvent(new KeyboardEvent("keydown",{key:"ArrowDown",altKey:true,bubbles:true,cancelable:true}))');
-        await wait('globalThis.__t3Persisted.getSnapshot().members[0].threadId==="persisted-test-thread-2"');
-        result.keyboardReordered = true;
+        result.noCustomGrip = await evaluate('!document.querySelector("[data-persisted-drag-handle]")');
+        if (!result.noCustomGrip) throw new Error('Custom drag grip remained.');
+        await new Promise(resolve=>setTimeout(resolve,250));
+        await mouseDrag('li[data-persisted-ref][data-thread-item]', true);
+        result.cancelPreservedOrder = await evaluate('globalThis.__t3Persisted.getSnapshot().members[0].threadId==="persisted-test-thread-2" && JSON.parse(document.querySelector("li[data-persisted-ref][data-thread-item]").dataset.persistedRef)[1]==="persisted-test-thread-2"');
+        if (!result.cancelPreservedOrder) throw new Error('Escape changed the saved order.');
         const image = await window.webContents.capturePage();
         fs.writeFileSync(path.join(process.env.T3_PERSISTED_TEST_OUTPUT, 'persisted.png'), image.toPNG());
         choice = 'Remove from Persisted';
