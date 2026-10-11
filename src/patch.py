@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
-ADAPTER_VERSION = 2
+ADAPTER_VERSION = 3
 
 
 class UnsupportedBuild(RuntimeError):
@@ -278,7 +278,9 @@ def prepare(source, destination):
     boot_source = f'try{{require({loader_path})}}catch(error){{console.error("[T3 Persisted] Loader disabled",error)}}\n' + archive.read(boot).decode()
     preload_source = archive.read(preload).decode() + '\ntry {\n' + (ROOT / 'src/preload.cjs').read_text() + '\n} catch(error) { console.error("[T3 Persisted] Bridge disabled", error); }\n'
     html_source = archive.read(html).decode()
+    keypad = (ROOT / 'src/terminal-keypad.js').read_text()
     runtime = (ROOT / 'src/renderer.js').read_text()
+    runtime = keypad + '\n' + runtime
     html_source = replace_once(html_source, '<head>', '<head>\n<script>\n' + runtime + '\n</script>', 'early Persisted runtime')
     # T3 registers a URL-handler desktop file at launch. Keep that registration
     # going through the refresher rather than pointing at a stale cached build.
@@ -307,7 +309,7 @@ def prepare(source, destination):
         # Check transformed code before it can replace a working overlay.
         check_environment = os.environ.copy()
         check_environment['ELECTRON_RUN_AS_NODE'] = '1'
-        for name, content in [('ui.mjs', main_source), ('boot.cjs', boot_source), ('preload.cjs', preload_source), ('electron.cjs', electron_source)]:
+        for name, content in [('keypad.js', keypad), ('ui.mjs', main_source), ('boot.cjs', boot_source), ('preload.cjs', preload_source), ('electron.cjs', electron_source)]:
             checked = staging / name
             checked.write_text(content)
             subprocess.run([str(source / 't3code'), '--check', str(checked)], check=True, capture_output=True, env=check_environment)

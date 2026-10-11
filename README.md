@@ -18,6 +18,12 @@ The first customization adds a **Persisted** thread list to T3 Code's sidebar.
 
 Moving a thread to Persisted does not settle, snooze, archive, move projects, or alter its conversation history. Existing threads work too. Project filters and search still apply. Archived and deleted threads remain governed by T3's normal lifecycle.
 
+## Keypad navigation in terminals
+
+Normalizes keypad Home, End, arrows, Page Up/Down, Insert, Delete, and Clear when the browser reports a navigation key on the numeric keypad. This fixes keypad Home with Num Lock off producing no terminal input. Numeric keypad input with Num Lock on and keys outside the terminal are preserved.
+
+Run the regression tests with `node --test tests/terminal-keypad.test.cjs`.
+
 ## Requirements
 
 - Linux with Python 3, `cp`, and a working T3 Code Nightly installation.
@@ -39,7 +45,7 @@ The installer copies the customization into `~/.local/share/t3code-persisted`, c
 
 The installed directory keeps its original name so existing launchers and saved membership continue to work after the repository rename.
 
-Quit and reopen T3 Code once to activate it. Launching the customization while an old T3 instance is running only forwards to that existing instance.
+Quit and reopen T3 Code once to activate the sidebar and keypad fixes. Launching the customization while an old T3 instance is running only forwards to that existing instance.
 
 ## Nightly updates
 
@@ -90,10 +96,10 @@ Source and membership remain on disk for recovery. The official installation is 
 
 ## Tests
 
-Run the storage and renderer tests:
+Run the storage, renderer, and keypad tests:
 
 ```sh
-node --test tests/storage.test.cjs tests/renderer.test.cjs
+node --test tests/storage.test.cjs tests/renderer.test.cjs tests/terminal-keypad.test.cjs
 ```
 
 With the supported nightly installed, check the adapter:
