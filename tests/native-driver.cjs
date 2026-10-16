@@ -44,6 +44,7 @@ app.on('browser-window-created', (_event, window) => {
       await new Promise(resolve=>setTimeout(resolve,60));
       window.webContents.sendInputEvent({type:'mouseMove',x:points.targetX,y:points.targetY,modifiers:['leftButtonDown']});
       await new Promise(resolve=>setTimeout(resolve,180));
+      result.dragPreview = await evaluate('[...document.querySelectorAll("li[data-thread-item]")].map(row=>({style:row.style.cssText,active:row.querySelector("[data-testid=sidebar-row-card]")?.className}))');
       if(cancel){
         window.webContents.sendInputEvent({type:'keyDown',keyCode:'Escape'});
         window.webContents.sendInputEvent({type:'keyUp',keyCode:'Escape'});
@@ -79,6 +80,8 @@ app.on('browser-window-created', (_event, window) => {
         const before = await evaluate('[...document.querySelectorAll("li[data-thread-item]")].map(row=>row.dataset.threadItem)');
         await mouseDrag('li[data-thread-item]');
         const after = await evaluate('[...document.querySelectorAll("li[data-thread-item]")].map(row=>row.dataset.threadItem)');
+        result.beforeOrder = before;
+        result.afterOrder = after;
         result.nativeReordered = before[0]===after[1] && before[1]===after[0];
         result.membershipUnchanged = await evaluate('globalThis.__t3Persisted.getSnapshot().members.length===0');
         if(!result.nativeReordered || !result.membershipUnchanged) throw new Error('Native thread ordering regressed.');

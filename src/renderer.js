@@ -1,6 +1,7 @@
 (() => {
   const bridge = globalThis.t3PersistedBridge;
   const listeners = new Set();
+  const pruning = new Set();
   const disabled = { enabled: false, version: 1, collapsed: false, members: [] };
   let snapshot;
   const key = ref => JSON.stringify([ref.environmentId, ref.threadId ?? ref.id]);
@@ -39,8 +40,18 @@
     const rows = items.filter(item => item.kind === 'thread' && item.section === 'persisted');
     const from = rows.findIndex(item => item.key === active), to = rows.findIndex(item => item.key === over);
     if (!source || !destination || from < 0 || to < 0 || from === to) return;
-    return update({ type: 'move', ref: { environmentId: source.environmentId, threadId: source.id },
-      target: { environmentId: destination.environmentId, threadId: destination.id }, position: from < to ? 'after' : 'before' });
+    const ref = { environmentId: source.environmentId, threadId: source.id };
+    const target = { environmentId: destination.environmentId, threadId: destination.id };
+    const position = from < to ? 'after' : 'before';
+    const previous = snapshot;
+    const members = previous.members.filter(member => key(member) !== key(ref));
+    const index = members.findIndex(member => key(member) === key(target));
+    if (index >= 0) {
+      const moved = previous.members.find(member => key(member) === key(ref));
+      members.splice(position === 'after' ? index + 1 : index, 0, moved);
+      publish({ ...previous, members });
+    }
+    return update({ type: 'move', ref, target, position }, previous);
   }
 
   function notify(message) {
@@ -57,12 +68,13 @@
     setTimeout(() => notice.remove(), 12000);
   }
 
-  async function update(operation) {
+  async function update(operation, rollback) {
     try {
       // Only change visibility after the membership file was successfully written.
       publish(await bridge.update(operation));
       return true;
     } catch (error) {
+      if (rollback) publish(rollback);
       notify(error.message || String(error));
       return false;
     }
@@ -104,5 +116,12 @@
       ref: { environmentId: thread.environmentId, threadId: thread.id ?? thread.threadId },
     }),
     getSnapshot: () => snapshot,
+    prune: thread => {
+      const ref = { environmentId: thread.environmentId, threadId: thread.id ?? thread.threadId };
+      const id = key(ref);
+      if (pruning.has(id)) return;
+      pruning.add(id);
+      queueMicrotask(() => update({ type: 'remove', ref }).finally(() => pruning.delete(id)));
+    },
   };
 })();

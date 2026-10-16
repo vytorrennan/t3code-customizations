@@ -20,10 +20,12 @@ state.mkdir(parents=True, exist_ok=True)
 database = state / 'statev2.sqlite'
 if not database.exists():
     original = sqlite3.connect((Path.home()/'.t3/userdata/statev2.sqlite').as_uri() + '?mode=ro', uri=True)
-    target = sqlite3.connect(database)
+    fixture = database.with_suffix('.fixture.tmp')
+    fixture.unlink(missing_ok=True)
+    target = sqlite3.connect(fixture)
     # Copy schema and migration bookkeeping only. No personal threads, messages,
     # provider sessions, credentials or events are copied into the test fixture.
-    for (sql,) in original.execute("select sql from sqlite_master where sql is not null and name != 'sqlite_sequence' order by case type when 'table' then 0 else 1 end"):
+    for (sql,) in original.execute("select sql from sqlite_master where sql is not null and name not glob 'sqlite_*' order by case type when 'table' then 0 else 1 end"):
         target.execute(sql)
     columns = list(original.execute('pragma table_info(effect_sql_migrations)'))
     rows = list(original.execute('select * from effect_sql_migrations'))
@@ -38,6 +40,7 @@ if not database.exists():
     target.commit()
     original.close()
     target.close()
+    fixture.replace(database)
 (state/'client-settings.json').write_text(json.dumps({'onboardingCompletedAt': '2026-10-11T12:00:00.000Z', 'legacySidebarEnabled': False, 'sidebarWorkingShelfEnabled': False, 'panelAnimationDurationMs': 0}))
 (state/'desktop-settings.json').write_text(json.dumps({'localEnvironmentEnabled': True,'mainWindowBounds':{'x':0,'y':0,'width':1100,'height':800}}))
 for phase in ['native', 'add', 'restart', 'corrupt']:
@@ -46,6 +49,8 @@ for phase in ['native', 'add', 'restart', 'corrupt']:
     environment = os.environ.copy()
     environment.pop('ELECTRON_RUN_AS_NODE', None)
     environment.update(T3CODE_HOME=str(OUTPUT/'state'),XDG_CONFIG_HOME=str(OUTPUT/'config'),XDG_DATA_HOME=str(OUTPUT/'data'),T3CODE_DISABLE_AUTO_UPDATE='true',T3_PERSISTED_DATA_DIR=str(OUTPUT/'membership'),T3_PERSISTED_TEST_DRIVER=str(ROOT/'tests/native-driver.cjs'),T3_PERSISTED_TEST_OUTPUT=str(OUTPUT),T3_PERSISTED_TEST_PHASE=phase)
+    result_file = OUTPUT / (phase + '.json')
+    result_file.unlink(missing_ok=True)
     log = (OUTPUT / (phase + '.log')).open('w')
     overlay = OUTPUT / (phase + '-app')
     if overlay.exists():
@@ -59,7 +64,6 @@ for phase in ['native', 'add', 'restart', 'corrupt']:
     log.close()
     if overlay.exists():
         shutil.rmtree(overlay)
-    result_file = OUTPUT / (phase+'.json')
     result = json.loads(result_file.read_text()) if result_file.exists() else {'error':'No result; see '+str(OUTPUT/(phase+'.log'))}
     print(phase, json.dumps({k:v for k,v in result.items() if k not in ['nativeBefore','persistedCard','body']}),flush=True)
     if not result.get('ok'):
