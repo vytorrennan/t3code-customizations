@@ -33,6 +33,15 @@ app.on('browser-window-created', (_event, window) => {
       };check();
     })`);
     const mouseDrag = async (selector, cancel = false) => {
+      await wait(`(() => {
+        const rows=[...document.querySelectorAll(${JSON.stringify(selector)})];
+        return rows.length>=2 && rows.every(row=>{
+          const card=row.querySelector('[data-testid=sidebar-row-card]');
+          let fiber=card?.[Object.keys(card).find(key=>key.startsWith('__reactFiber'))];
+          for(;fiber;fiber=fiber.return)if(fiber.memoizedProps?.sortable?.listeners?.onPointerDown)return true;
+          return false;
+        });
+      })()`);
       const points = await evaluate(`(() => {
         const rows=[...document.querySelectorAll(${JSON.stringify(selector)})];
         const source=rows[1].querySelector('[data-testid=sidebar-row-card]').getBoundingClientRect();
@@ -79,6 +88,7 @@ app.on('browser-window-created', (_event, window) => {
         await new Promise(resolve=>setTimeout(resolve,250));
         const before = await evaluate('[...document.querySelectorAll("li[data-thread-item]")].map(row=>row.dataset.threadItem)');
         await mouseDrag('li[data-thread-item]');
+        await wait(`document.querySelector('li[data-thread-item]')?.dataset.threadItem===${JSON.stringify(before[1])}`);
         const after = await evaluate('[...document.querySelectorAll("li[data-thread-item]")].map(row=>row.dataset.threadItem)');
         result.beforeOrder = before;
         result.afterOrder = after;

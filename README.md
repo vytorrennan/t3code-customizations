@@ -31,7 +31,7 @@ Run the regression tests with `node --test tests/terminal-keypad.test.cjs`.
 - T3's current sidebar. The optional legacy sidebar is not customized.
 - Node.js is needed only for the JavaScript unit tests. The launcher uses the installed Electron runtime to check transformed JavaScript.
 
-Tested on `0.0.46-nightly.20261011.2980`. This modifies internal integration points, so later nightlies may require an adapter update. Other operating systems and installation layouts have not been tested.
+Tested on `0.1.1-nightly.20261018.3335`, including its React Compiler sidebar. The earlier sidebar adapter is also retained. Other operating systems and installation layouts have not been tested.
 
 ## Install
 
@@ -49,11 +49,13 @@ Quit and reopen T3 Code once to activate the sidebar and keypad fixes. Launching
 
 ## Nightly updates
 
-Continue updating the official nightly through your usual package manager. At launch, the customization checks the installed package and generates a fresh patched copy when needed. It does not modify `/opt` or replace the package manager's installation.
+Continue updating the official nightly through your usual package manager, then open T3 normally. At launch, the customization checks the installed package and generates a fresh patched copy when needed. A systemd user path unit also prepares the customization after package transactions and repairs either desktop entry if T3 rewrites it. Both command names supplied by the package have user launchers. The installed app's own URL registration also points back to the custom launcher.
 
-Every expected integration point is checked, and transformed JavaScript is syntax-checked before launch. An unsupported build launches the untouched official app and retains the saved membership. If membership storage or the customization bridge is unavailable, threads appear in their native groups.
+Every expected integration point is checked, and transformed JavaScript is syntax-checked before launch. Generated copies include their own Electron runtime, resources, and native modules, so replacing the package cannot break a retained copy through links into `/opt`. Preparation is locked and the last working copy is selected atomically.
 
-Saved list data can survive updates; compatibility of the customization with every future nightly is not guaranteed.
+If a future nightly changes those integration points, the launcher opens the last compatible customized version and shows a desktop notification. It never silently launches the stock app. The newly installed nightly will be used once its adapter is supported. If there is no retained customized copy, startup stops with an error. The explicit official-app bypass below remains available. Membership stays separate from all generated copies.
+
+This keeps customizations available across incompatible updates; it does not promise that arbitrary future T3 internals will accept the current adapter. It does not modify `/opt` or replace the package manager's installation.
 
 To update the customization itself:
 
@@ -75,6 +77,9 @@ Then quit and reopen T3 Code.
 | Previous membership document | The adjacent `membership.json.bak` |
 | Original user desktop entries | `~/.local/share/t3code-persisted/backups/` |
 | Generated app copies | `~/.cache/t3code-persisted/builds/` |
+| Last compatible customized app | `~/.cache/t3code-persisted/last-good` |
+| Selected executable and update error | `~/.cache/t3code-persisted/status.json` |
+| Update and desktop-entry watcher | `~/.config/systemd/user/t3code-customizations.path` |
 
 Membership records contain only environment IDs, thread IDs, and dates. Their array order is the saved list order. Reordering preserves members hidden by search and project filters. The file is written atomically before thread visibility changes. If it becomes unreadable, the customization leaves it untouched and uses native grouping. Two recent generated app copies are retained, along with any copy still running.
 
@@ -106,7 +111,10 @@ With the supported nightly installed, check the adapter:
 
 ```sh
 python3 tests/adapter_test.py
+python3 tests/startup_test.py
 ```
+
+The startup regression test builds a real customized copy, replaces its simulated official package with an incompatible update, and verifies that the retained Electron executable still reads and loads its original app. It also checks launcher repair and rejection of a stock-app fallback.
 
 With a graphical Linux session and an initialized local T3 database, exercise the actual Electron UI:
 

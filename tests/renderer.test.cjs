@@ -62,3 +62,43 @@ test('native drag targets keep shelves separate and use native array-move order'
   assert.equal(addon.target(resolver, items, 'n2', 'n1'), 'native-result');
   assert.equal(nativeCalls, 1);
 });
+
+test('extracted sidebar model preserves saved order, search, collapse, and settled pruning', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'persisted-model-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const store = new Store(directory);
+  const a = { environmentId: 'env', id: 'a' }, b = { environmentId: 'env', id: 'b' };
+  const settled = { environmentId: 'env', id: 'settled', settledOverride: 'settled' };
+  const other = { environmentId: 'env', id: 'other' };
+  for (const thread of [a, b, settled]) store.update({ type: 'add', ref: { environmentId: 'env', threadId: thread.id } });
+  const context = vm.createContext({ console, queueMicrotask, t3PersistedBridge: { read: () => store.read(), subscribe: () => {}, update: async operation => store.update(operation) } });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/renderer.js'), 'utf8'), context);
+  await new Promise(resolve => setImmediate(resolve));
+  const addon = context.__t3Persisted;
+  const native = {
+    searchableThreads: [other, b, a, settled],
+    pinnedThreads: [a], activeThreads: [b, other], workingThreads: [], snoozedThreads: [], settledThreads: [settled],
+    renderedSettledThreads: [settled], visibleSnoozedThreads: [], visibleWorkingThreads: [],
+    threadByKey: new Map([['other', other]]), sectionByThreadKey: new Map(), draggableThreadKeys: new Set(),
+    orderedThreadKeys: ['b', 'other', 'a'], pinnedKeys: ['a'], activeKeys: ['b', 'other'],
+    pinnedKeysById: new Map([['a', '0']]), activeKeysById: new Map([['b', '1'], ['other', '2']]),
+    settledThreadKeys: new Set(['settled']), snoozedThreadKeys: new Set(),
+  };
+  const React = { useMemo: fn => fn() }, threadKey = thread => thread.id;
+  const model = addon.classify(React, native, addon.getSnapshot(), threadKey);
+  assert.deepEqual(Array.from(model.persistedThreads, row => row.id), ['a', 'b']);
+  assert.deepEqual(Array.from(model.activeThreads, row => row.id), ['other']);
+  assert.deepEqual(Array.from(model.orderedThreadKeys), ['a', 'b', 'other']);
+  assert.deepEqual(Array.from(model.activeKeys), ['other']);
+  assert.equal(model.searchableThreads, native.searchableThreads);
+  assert.equal(model.threadByKey.get('a'), a);
+  assert.equal(model.sectionByThreadKey.get('a'), 'persisted');
+  assert.equal(native.pinnedThreads[0], a);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(addon.getSnapshot().has(settled), false);
+  await addon.getSnapshot().toggleCollapsed();
+  const collapsed = addon.classify(React, native, addon.getSnapshot(), threadKey);
+  assert.deepEqual(Array.from(collapsed.orderedThreadKeys), ['other']);
+  const items = addon.items([], collapsed.persistedThreads, addon.getSnapshot(), threadKey);
+  assert.deepEqual(Array.from(items, item => item.marker), ['persisted-header']);
+});

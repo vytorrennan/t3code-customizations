@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import json
 import shutil
 import subprocess
 
@@ -23,28 +22,17 @@ launcher.write_text('#!/bin/sh\nexec /usr/bin/python3 ' + "'" + str(ROOT/'src/pa
 launcher.chmod(0o755)
 official.write_text('#!/bin/sh\nunset ELECTRON_RUN_AS_NODE\nexec /usr/bin/t3code-nightly "$@"\n')
 official.chmod(0o755)
-backup = ROOT/'backups'
-backup.mkdir(exist_ok=True)
-manifest_file = backup/'desktop-entries.json'
-manifest = json.loads(manifest_file.read_text()) if manifest_file.exists() else {}
-entries = HOME_DIRECTORY/'.local/share/applications'
-entries.mkdir(parents=True, exist_ok=True)
-for name in ['t3code.desktop','com.t3tools.T3Code.desktop']:
-    target = entries/name
-    if name not in manifest:
-        manifest[name] = {'existed': target.exists()}
-        if target.exists():
-            shutil.copy2(target, backup/name)
-    if target.exists():
-        content = target.read_text()
-    elif name == 't3code.desktop':
-        content = Path('/usr/share/applications/t3code.desktop').read_text()
-    else:
-        content = '[Desktop Entry]\nType=Application\nName=T3 Code (Nightly)\nNoDisplay=true\nMimeType=x-scheme-handler/t3code;\nExec=t3code-nightly %U\n'
-    lines = content.splitlines()
-    lines = [('Exec=' + str(launcher) + ' %U') if line.startswith('Exec=') else ('TryExec=' + str(launcher)) if line.startswith('TryExec=') else line for line in lines]
-    target.write_text('\n'.join(lines)+'\n')
-manifest_file.write_text(json.dumps(manifest, indent=2)+'\n')
-if shutil.which('update-desktop-database'):
-    subprocess.run(['update-desktop-database',str(entries)],check=True)
-print('Installed. Quit and reopen T3 Code to activate Persisted.')
+import sys
+sys.path.insert(0, str(ROOT / 'src'))
+from launchers import repair, install_guard
+repair(backup=True)
+# Cover both names supplied by the official package.
+alias = HOME_DIRECTORY / '.local/bin/t3-code-nightly-desktop'
+if (alias.exists() or alias.is_symlink()) and (not alias.is_symlink() or alias.readlink() != launcher):
+    raise SystemExit('An existing t3-code-nightly-desktop launcher would be overwritten.')
+if not alias.is_symlink():
+    alias.symlink_to(launcher)
+# Prepare now, so installation cannot report success with a broken adapter.
+subprocess.run(['/usr/bin/python3', str(ROOT / 'src/patch.py'), '--prepare-only'], check=True)
+install_guard(ROOT)
+print('Installed and prepared. Quit and reopen T3 Code to activate customizations.')

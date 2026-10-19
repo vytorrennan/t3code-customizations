@@ -94,6 +94,44 @@
   }
 
   globalThis.__t3Persisted = {
+    classify: (React, native, state, threadKey) => React.useMemo(() => {
+      const members = state.sort(native.searchableThreads.filter(thread => {
+        if (!state.has(thread)) return false;
+        if (thread.settledOverride === 'settled') {
+          globalThis.__t3Persisted.prune(thread);
+          return false;
+        }
+        return true;
+      }));
+      const keys = new Set(members.map(threadKey));
+      const result = { ...native, persistedThreads: members };
+      for (const field of ['pinnedThreads', 'activeThreads', 'workingThreads', 'snoozedThreads', 'settledThreads', 'renderedSettledThreads', 'visibleSnoozedThreads', 'visibleWorkingThreads']) {
+        result[field] = native[field].filter(thread => !keys.has(threadKey(thread)));
+      }
+      result.threadByKey = new Map(native.threadByKey);
+      result.sectionByThreadKey = new Map(native.sectionByThreadKey);
+      result.draggableThreadKeys = new Set(native.draggableThreadKeys);
+      for (const thread of members) {
+        const key = threadKey(thread);
+        result.threadByKey.set(key, thread);
+        result.sectionByThreadKey.set(key, 'persisted');
+        result.draggableThreadKeys.add(key);
+      }
+      result.orderedThreadKeys = [...(state.collapsed ? [] : members.map(threadKey)), ...native.orderedThreadKeys.filter(key => !keys.has(key))];
+      for (const field of ['pinnedKeys', 'activeKeys']) result[field] = native[field].filter(key => !keys.has(key));
+      for (const field of ['pinnedKeysById', 'activeKeysById', 'settledThreadKeys', 'snoozedThreadKeys']) {
+        result[field] = new native[field].constructor([...native[field]].filter(entry => !keys.has(Array.isArray(entry) ? entry[0] : entry)));
+      }
+      return result;
+    }, [native, state]),
+    items: (native, members, state, threadKey) => !state.enabled ? native : [
+      { kind: 'marker', marker: 'persisted-header' },
+      ...(state.collapsed ? [] : [
+        ...(members.length ? members.map(thread => ({ kind: 'thread', key: threadKey(thread), section: 'persisted' })) : [{ kind: 'marker', marker: 'persisted-placeholder' }]),
+        { kind: 'marker', marker: 'persisted-divider' },
+      ]),
+      ...native,
+    ],
     use: React => React.useSyncExternalStore(listener => {
       listeners.add(listener);
       return () => listeners.delete(listener);

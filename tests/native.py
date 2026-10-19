@@ -16,6 +16,8 @@ membership_directory = OUTPUT / 'membership'
 if membership_directory.exists():
     shutil.rmtree(membership_directory)
 state = OUTPUT / 'state/userdata'
+if state.exists():
+    shutil.rmtree(state)
 state.mkdir(parents=True, exist_ok=True)
 database = state / 'statev2.sqlite'
 if not database.exists():

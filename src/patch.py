@@ -12,9 +12,10 @@ import struct
 import subprocess
 import sys
 import tempfile
+from launchers import repair
 
 ROOT = Path(__file__).resolve().parent.parent
-ADAPTER_VERSION = 4
+ADAPTER_VERSION = 5
 
 
 class UnsupportedBuild(RuntimeError):
@@ -35,6 +36,9 @@ def match_one(pattern, text, description, flags=0):
 
 
 def patch_sidebar(source):
+    if re.search(r'sectionByThreadKey:[\w$]+,pinnedKeys:', source):
+        from compiled_sidebar import patch
+        return patch(source, match_one, replace_once)
     # Locate the sidebar through semantic field names; hashed filenames and local
     # minifier identifiers are discovered from the installed build each time.
     marker = source.find('snoozed-shelf-header')
@@ -245,14 +249,19 @@ class Archive:
 
 def signature(source):
     files = [source / 'resources/app.asar', source / 't3code'] + sorted((ROOT / 'src').glob('*'))
-    return {'adapter': ADAPTER_VERSION, 'inputs': {str(file): [file.stat().st_mtime_ns, file.stat().st_size] for file in files if file.is_file()}}
+    inputs = {}
+    for file in files:
+        if file.is_file():
+            with file.open('rb') as stream:
+                inputs[str(file)] = hashlib.file_digest(stream, 'sha256').hexdigest()
+    return {'adapter': ADAPTER_VERSION, 'inputs': inputs}
 
 
 def prepare(source, destination):
     source, destination = Path(source).resolve(), Path(destination)
     expected = signature(source)
     marker = destination / 'persisted-build.json'
-    if marker.exists() and json.loads(marker.read_text()) == expected:
+    if marker.exists() and (destination / 'persisted-self-contained').exists() and json.loads(marker.read_text()) == expected:
         return destination / 't3code'
     binary = (source / 't3code').read_bytes()
     sentinel = b'dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'
@@ -293,17 +302,12 @@ def prepare(source, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix='persisted-build-', dir=destination.parent))
     try:
-        for entry in source.iterdir():
-            if entry.name in {'t3code', 'resources'}:
-                continue
-            (staging / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
-        subprocess.run(['cp', '--reflink=auto', str(source / 't3code'), str(staging / 't3code')], check=True)
+        # A retained build must own its runtime and native modules. Symlinks to
+        # /opt silently mixed old JavaScript with new Electron after an update.
+        subprocess.run(['cp', '-aL', '--reflink=auto', str(source) + '/.', str(staging)], check=True)
         resources = staging / 'resources'
-        resources.mkdir()
-        for entry in (source / 'resources').iterdir():
-            if entry.name != 'app.asar':
-                (resources / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
         archive.write(resources / 'app.asar', changes)
+        (staging / 'persisted-self-contained').write_text('1\n')
         (staging / 'persisted-build.json').write_text(json.dumps(expected, indent=2))
         (staging / 'persisted-version.txt').write_text(installed_version)
         # Check transformed code before it can replace a working overlay.
@@ -314,6 +318,8 @@ def prepare(source, destination):
             checked.write_text(content)
             subprocess.run([str(source / 't3code'), '--check', str(checked)], check=True, capture_output=True, env=check_environment)
             checked.unlink()
+        if signature(source) != expected:
+            raise UnsupportedBuild('The installed package changed during preparation; retaining the previous customized app')
         if destination.exists():
             shutil.rmtree(destination)
         staging.rename(destination)
@@ -321,6 +327,38 @@ def prepare(source, destination):
         if staging.exists():
             shutil.rmtree(staging)
     return destination / 't3code'
+
+
+def select_build(source, cache, destination=None):
+    """Use the new customized build or retain the last complete customized app."""
+    cache.mkdir(parents=True, exist_ok=True)
+    last_good = cache / 'last-good'
+    with (cache / 'prepare.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            if source.resolve() == Path('/opt/t3code-nightly-bin') and Path('/var/lib/pacman/db.lck').exists():
+                raise UnsupportedBuild('The package manager is still updating T3 Code')
+            fingerprint = hashlib.sha256(json.dumps(signature(source), sort_keys=True).encode()).hexdigest()[:20]
+            target = Path(destination) if destination else cache / 'builds' / fingerprint
+            executable = prepare(source, target)
+            if destination is None:
+                temporary = cache / 'last-good.tmp'
+                temporary.unlink(missing_ok=True)
+                temporary.symlink_to(target)
+                temporary.replace(last_good)
+                cleanup_builds(cache / 'builds', target)
+            return executable, None
+        except Exception as error:
+            previous = last_good.resolve()
+            if destination is None and (previous / 'persisted-self-contained').exists() and (previous / 't3code').is_file() and (previous / 'resources/app.asar').is_file():
+                return previous / 't3code', str(error)
+            raise
+
+
+def report_failure(message):
+    print('[T3 Customizations] ' + message, file=sys.stderr)
+    if shutil.which('notify-send'):
+        subprocess.run(['notify-send', '-u', 'critical', 'T3 Code customizations', message], check=False)
 
 
 def main():
@@ -331,20 +369,24 @@ def main():
     args, forwarded = parser.parse_known_args()
     source = Path(args.source)
     try:
+        # Test launches use isolated XDG directories and must not rewrite the
+        # real desktop entries or publish their fixture as the last good app.
+        if not args.destination:
+            repair()
         cache = Path.home() / '.cache/t3code-persisted'
-        cache.mkdir(parents=True, exist_ok=True)
-        fingerprint = hashlib.sha256(json.dumps(signature(source), sort_keys=True).encode()).hexdigest()[:20]
-        destination = Path(args.destination) if args.destination else cache / 'builds' / fingerprint
-        with (cache / 'prepare.lock').open('a') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
-            executable = prepare(source, destination)
-            cleanup_builds(cache / 'builds', destination)
+        executable, failure = select_build(source, cache, args.destination)
     except Exception as error:
-        print(f'[T3 Persisted] Cannot customize this build: {error}. Launching the official app; memberships are retained.', file=sys.stderr)
-        executable = source / 't3code'
+        report_failure(f'Cannot prepare customizations: {error}. No customized build is available. The official app was not started. Saved membership is retained.')
+        return 1
+    status = cache / 'status.json'
+    if not args.destination:
+        status.write_text(json.dumps({'executable': str(executable), 'updateError': failure}, indent=2) + '\n')
+    if failure:
+        message = f'The installed update needs a customization adapter change: {failure}. Keeping the last customized T3 Code version.'
+        report_failure(message)
     if args.prepare_only:
         print(executable)
-        return 0 if executable != source / 't3code' else 1
+        return 0
     os.environ.pop('ELECTRON_RUN_AS_NODE', None)
     os.execv(str(executable), [str(executable), *forwarded])
 
