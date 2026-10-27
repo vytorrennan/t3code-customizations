@@ -31,7 +31,7 @@ Run the regression tests with `node --test tests/terminal-keypad.test.cjs`.
 - T3's current sidebar. The optional legacy sidebar is not customized.
 - Node.js is needed only for the JavaScript unit tests. The launcher uses the installed Electron runtime to check transformed JavaScript.
 
-Tested on `0.1.1-nightly.20261018.3335`, including its React Compiler sidebar. The earlier sidebar adapter is also retained. Other operating systems and installation layouts have not been tested.
+Tested on `0.1.3-nightly.20261026.3740`, including its React Compiler sidebar. The earlier sidebar adapter is also retained. Other operating systems and installation layouts have not been tested.
 
 ## Install
 

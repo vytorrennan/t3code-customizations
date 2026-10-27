@@ -1,5 +1,6 @@
 """Exercise the actual installed Electron UI using synthetic local threads."""
 import json
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 import signal
@@ -27,12 +28,16 @@ if not database.exists():
     target = sqlite3.connect(fixture)
     # Copy schema and migration bookkeeping only. No personal threads, messages,
     # provider sessions, credentials or events are copied into the test fixture.
-    for (sql,) in original.execute("select sql from sqlite_master where sql is not null and name not glob 'sqlite_*' order by case type when 'table' then 0 else 1 end"):
+    # Creating a virtual table also creates its shadow tables.
+    shadow_tables = {row[1] for row in original.execute('pragma table_list') if row[2] == 'shadow'}
+    for name, sql in original.execute("select name, sql from sqlite_master where sql is not null and name not glob 'sqlite_*' order by case type when 'table' then 0 else 1 end"):
+        if name in shadow_tables:
+            continue
         target.execute(sql)
     columns = list(original.execute('pragma table_info(effect_sql_migrations)'))
     rows = list(original.execute('select * from effect_sql_migrations'))
     target.executemany('insert into effect_sql_migrations values (' + ','.join('?' for _ in columns) + ')', rows)
-    now = '2026-10-11T12:00:00.000Z'
+    now = datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
     target.execute('insert into projection_projects(project_id,title,workspace_root,scripts_json,created_at,updated_at) values (?,?,?,?,?,?)', ('persisted-test-project', 'Example project', str(OUTPUT), '[]', now, now))
     for number, title in [(1, 'Plan the next release'), (2, 'Review the settings page')]:
         thread = f'persisted-test-thread-{number}'

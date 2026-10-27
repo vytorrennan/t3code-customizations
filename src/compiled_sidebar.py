@@ -8,16 +8,16 @@ def patch(source, match_one, replace_once):
     end = source.find('function ', marker)
     sidebar = source[start:end]
     react = match_one(r'\(0,([\w$]+)\.useLayoutEffect\)\([\w$]+,[\w$]+\)', sidebar, 'sidebar React namespace')[1]
-    header = match_one(r'^function ([\w$]+)\(\)\{let ([\w$]+)=\(0,([\w$]+)\.c\)\((\d+)\),', sidebar, 'compiled sidebar cache')
-    cache = header[2]
-    replacement = (f'function {header[1]}(){{let __t3PersistedState=__t3PersistedRuntime.use({react});'
-                   f'let {cache}=(0,{header[3]}.c)({header[4]}),')
+    header = match_one(r'^function ([\w$]+)\(([\w$]*)\)\{let ([\w$]+)=\(0,([\w$]+)\.c\)\((\d+)\),', sidebar, 'compiled sidebar cache')
+    cache = header[3]
+    replacement = (f'function {header[1]}({header[2]}){{let __t3PersistedState=__t3PersistedRuntime.use({react});'
+                   f'let {cache}=(0,{header[4]}.c)({header[5]}),')
     sidebar = replace_once(sidebar, header[0], replacement, 'Persisted subscription')
-    model = match_one(r'let\{threads:.*?sectionByThreadKey:([\w$]+),pinnedKeys:.*?\}=([\w$]+)\(([\w$]+)\)', sidebar, 'sidebar model')
+    model = match_one(r'let\{(?=[\w$]+:)(?:(?!\}).)*?sectionByThreadKey:([\w$]+),pinnedKeys:.*?\}=([\w$]+)\(([\w$]+)\)', sidebar, 'sidebar model')
     section_map, hook, argument = model.groups()
     key = match_one(r'let ([\w$]+)=([\w$]+)\(([\w$]+)\(([\w$]+).environmentId,\4.id\)\),[\w$]+=[\w$]+===`active`', sidebar, 'thread key factory')
     key_expression = f'thread=>{key[2]}({key[3]}(thread.environmentId,thread.id))'
-    bound = model[0].replace('let{threads:', 'let{persistedThreads:__t3PersistedRows,threads:', 1)
+    bound = model[0].replace('let{', 'let{persistedThreads:__t3PersistedRows,', 1)
     bound = bound.replace(f'{hook}({argument})', f'__t3PersistedRuntime.classify({react},{hook}({argument}),__t3PersistedState,{key_expression})')
     sidebar = replace_once(sidebar, model[0], bound, 'Persisted sidebar model')
     # Wrap the native item list before its identity/order state is initialized.
@@ -27,8 +27,17 @@ def patch(source, match_one, replace_once):
     sidebar = replace_once(sidebar, variant[0], variant[1] + '===`persisted`||' + variant[0], 'Persisted full cards')
     props = match_one(r'thread:([\w$]+),variant:([\w$]+),variantAction:', sidebar, 'native row props')
     sidebar = replace_once(sidebar, props[0], props[0].replace('variantAction:', f'persistedRef:__t3PersistedState.has({props[1]})?JSON.stringify([{props[1]}.environmentId,{props[1]}.id]):void 0,variantAction:'), 'Persisted row marker')
-    jsx, toggle_component = match_one(r'\(0,([\w$]+)\.jsx\)\(([\w$]+),\{onClick:[\w$]+\.toggle.onToggle,expanded:', source, 'native shelf toggle').groups()
+    jsx, toggle_component = match_one(r'\(0,([\w$]+)\.jsx(?:s)?\)\(([\w$]+),\{onClick:[\w$]+\.toggle.onToggle,expanded:', source, 'native shelf toggle').groups()
     native_marker = match_one(r'function ([\w$]+)\(([\w$]+)\)\{(?:(?!function ).)*?\2.marker.endsWith\(`-placeholder`\)', source, 'native sortable marker', re.S)[1]
+    # Newer minifiers emit an unbraced loop and a labelled marker switch.
+    compact = re.search(r'for\(let ([\w$]+) of ([\w$]+)\)if\(\1.kind===`thread`\)([\w$]+).push\(([\w$]+)\(([\w$]+).get\(\1.key\),\1.section\)\);else ([\w$]+):switch', sidebar)
+    if compact:
+        item, item_list, accumulator, row, thread_map, label = compact.groups()
+        expanded = (f'for(let {item} of {item_list}){{if({item}.kind===`thread`){{'
+                    f'{accumulator}.push({row}({thread_map}.get({item}.key),{item}.section));continue}}'
+                    f'{label}:switch')
+        sidebar = replace_once(sidebar, compact[0], expanded, 'braced native row loop')
+        sidebar = replace_once(sidebar, f'}}return {accumulator}}})()', f'}}}}return {accumulator}}})()', 'native row loop end')
     output = match_one(r'for\(let ([\w$]+) of ([\w$]+)\)\{if\(\1.kind===`thread`\)\{([\w$]+).push\(([\w$]+)\(([\w$]+).get\(\1.key\),\1.section\)\);continue\}', sidebar, 'native row output')
     item, item_list, accumulator, row, thread_map = output.groups()
     custom = (
