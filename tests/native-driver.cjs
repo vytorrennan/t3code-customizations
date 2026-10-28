@@ -22,10 +22,11 @@ app.on('browser-window-created', (_event, window) => {
     const animateToggle = () => evaluate(`new Promise(resolve => {
       const start=performance.now();
       document.querySelector('[data-testid=sidebar-persisted-shelf-toggle]').click();
+      const list=document.querySelector('[data-testid=sidebar-persisted-header]')?.closest('ul');
       const check=()=>{
         const animations=document.getAnimations().filter(animation=>{
           const target=animation.effect?.target;
-          return target && target.closest('[data-testid=sidebar-persisted-header]')===null && target.closest('ul[role=presentation]') && animation.playState==='running';
+          return target && list && target.closest('ul')===list && target.closest('[data-testid=sidebar-persisted-header]')===null && animation.playState==='running';
         });
         if(animations.length)resolve(animations.map(animation=>({duration:animation.effect.getTiming().duration,easing:animation.effect.getTiming().easing})));
         else if(performance.now()-start>600)resolve([]);

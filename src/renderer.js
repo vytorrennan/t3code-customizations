@@ -137,6 +137,7 @@
       return () => listeners.delete(listener);
     }, () => snapshot, () => snapshot),
     target,
+    wrap: nativeTarget => (items, active, over) => target(nativeTarget, items, active, over),
     drop,
     menu: (items, thread) => {
       if (!snapshot.enabled) return items;

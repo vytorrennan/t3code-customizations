@@ -15,7 +15,7 @@ import tempfile
 from launchers import repair
 
 ROOT = Path(__file__).resolve().parent.parent
-ADAPTER_VERSION = 5
+ADAPTER_VERSION = 6
 
 
 class UnsupportedBuild(RuntimeError):
