@@ -12,6 +12,7 @@ The first customization adds a **Persisted** thread list to T3 Code's sidebar.
 - Drag a Persisted card just like a normal T3 thread to set its order. It uses the native drag sensor, card preview, collision detection, and row animations.
 - New members go to the bottom. Existing members initially follow the order they were added. Activity does not change this order.
 - A divider marks the end of the expanded list.
+- Persisted owns its header button. Changes to T3's private shelf toggle component do not require a matching adapter change.
 - Collapse and expansion reuse T3's native shelf animations and reduced-motion handling.
 - Right-click a member and choose **Remove from Persisted** to restore its normal group.
 - Membership, manual order, and collapse state are saved separately from T3's thread database.
@@ -24,6 +25,12 @@ Normalizes keypad Home, End, arrows, Page Up/Down, Insert, Delete, and Clear whe
 
 Run the regression tests with `node --test tests/terminal-keypad.test.cjs`.
 
+## Antigravity quotas
+
+Requests Google's quota summary as Antigravity Hub 2.28.2. Older bundled Hub user agents suppress Gemini and Argon summary buckets. Keeps separate Gemini weekly and 5-hour windows and the Gemini 4 Argon weekly window. Uses the first usable endpoint, matching Antigravity's daily endpoint preference, instead of mixing differing endpoint reports. Per-model quotas supplement missing families on older accounts. Disabled windows stay hidden.
+
+Run the quota behavior and build compatibility tests with `python3 tests/antigravity_quota_test.py`.
+
 ## Requirements
 
 - Linux with Python 3, `cp`, and a working T3 Code Nightly installation.
@@ -31,7 +38,7 @@ Run the regression tests with `node --test tests/terminal-keypad.test.cjs`.
 - T3's current sidebar. The optional legacy sidebar is not customized.
 - Node.js is needed only for the JavaScript unit tests. The launcher uses the installed Electron runtime to check transformed JavaScript.
 
-Tested on `0.1.4_nightly.20261028.3841-1`, including its React Compiler sidebar and shared drag-plan module. The earlier sidebar adapters are also retained. Other operating systems and installation layouts have not been tested.
+Tested on `0.1.7-nightly.20261103.4119`, including its React Compiler sidebar, shared drag-plan module, and restructured Antigravity quota fetch. The earlier sidebar adapters are also retained. Other operating systems and installation layouts have not been tested.
 
 ## Install
 
@@ -51,9 +58,13 @@ Quit and reopen T3 Code once to activate the sidebar and keypad fixes. Launching
 
 Continue updating the official nightly through your usual package manager, then open T3 normally. At launch, the customization checks the installed package and generates a fresh patched copy when needed. A systemd user path unit also prepares the customization after package transactions and repairs either desktop entry if T3 rewrites it. Both command names supplied by the package have user launchers. The installed app's own URL registration also points back to the custom launcher.
 
+The quota adapter discovers generated helper and local variable names and tolerates whitespace, indentation, comments between tokens, and equivalent string quotes at its integration points. Compatibility tests simulate these changes against the installed nightly. Sidebar adapters discover generated names too, including sorting and drag helpers. These tests cover specific transformations, not all possible compiler output. The sidebar still patches private compiled code, so a compiler rearrangement can require maintenance even when the visible sidebar is unchanged. There is no guarantee that only major updates will need adapter changes. Compatibility is checked by code structure, not by the nightly's version number.
+
+While pacman holds its transaction lock, the launcher quietly uses the last prepared customized build and records `updatePending: true`, with no adapter error or desktop notification. It does not fingerprint the changing package. The watcher prepares again after the transaction finishes and clears the pending state. If no customized build exists yet, startup stops with a message on stderr until preparation can safely run.
+
 Every expected integration point is checked, and transformed JavaScript is syntax-checked before launch. Generated copies include their own Electron runtime, resources, and native modules, so replacing the package cannot break a retained copy through links into `/opt`. Preparation is locked and the last working copy is selected atomically.
 
-If a future nightly changes those integration points, the launcher opens the last compatible customized version and shows a desktop notification. It never silently launches the stock app. The newly installed nightly will be used once its adapter is supported. If there is no retained customized copy, startup stops with an error. The explicit official-app bypass below remains available. Membership stays separate from all generated copies.
+If a future nightly changes those integration points, the launcher opens the last compatible customized version and shows one desktop notification per incompatible package and adapter combination. Repeated launches and watcher events keep the error in `status.json` without repeating the notification. It never silently launches the stock app. The newly installed nightly will be used once its adapter is supported. If there is no retained customized copy, startup stops with an error. The explicit official-app bypass below remains available. Membership stays separate from all generated copies.
 
 This keeps customizations available across incompatible updates; it does not promise that arbitrary future T3 internals will accept the current adapter. It does not modify `/opt` or replace the package manager's installation.
 

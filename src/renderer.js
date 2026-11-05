@@ -93,7 +93,30 @@
     console.error('[T3 Persisted] Disabled; native thread grouping retained.', error);
   }
 
+  // Own this small control rather than locating a private bundled component.
+  // Its native marker parent still supplies drag measurement and row animation.
+  function ShelfToggle({ jsx, onClick, expanded, children, ...props }) {
+    return jsx('button', {
+      type: 'button', tabIndex: -1, 'data-sidebar-row': 'shelf:persisted',
+      'aria-expanded': expanded, onClick,
+      className: 'flex h-8 w-full cursor-pointer items-center gap-2 rounded-md px-2 text-left text-xs font-medium text-sidebar-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70',
+      'data-testid': props['data-testid'],
+      children: [
+        jsx('span', { className: 'shrink-0', children }),
+        jsx('span', { 'aria-hidden': true, className: 'h-px min-w-2 flex-1 bg-sidebar-foreground/25' }),
+        jsx('svg', {
+          'aria-hidden': true, viewBox: '0 0 24 24', fill: 'none',
+          stroke: 'currentColor', strokeWidth: 2,
+          className: 'size-3 shrink-0 transition-transform',
+          style: { transform: expanded ? undefined : 'rotate(-90deg)' },
+          children: jsx('path', { d: 'm6 9 6 6 6-6' }),
+        }),
+      ],
+    });
+  }
+
   globalThis.__t3Persisted = {
+    ShelfToggle,
     classify: (React, native, state, threadKey) => React.useMemo(() => {
       const members = state.sort(native.searchableThreads.filter(thread => {
         if (!state.has(thread)) return false;

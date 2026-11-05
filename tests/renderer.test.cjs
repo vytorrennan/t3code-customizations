@@ -102,3 +102,24 @@ test('extracted sidebar model preserves saved order, search, collapse, and settl
   const items = addon.items([], collapsed.persistedThreads, addon.getSnapshot(), threadKey);
   assert.deepEqual(Array.from(items, item => item.marker), ['persisted-header']);
 });
+
+
+test('Persisted owns an accessible toggle independently of native shelf components', () => {
+  const context = vm.createContext({ console });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/renderer.js'), 'utf8'), context);
+  const jsx = (type, props) => ({ type, props });
+  let clicks = 0;
+  for (const expanded of [true, false]) {
+    const button = context.__t3Persisted.ShelfToggle({ jsx, expanded,
+      onClick: () => clicks++, children: 'Persisted (2)',
+      'data-testid': 'sidebar-persisted-shelf-toggle' });
+    assert.equal(button.type, 'button');
+    assert.equal(button.props.type, 'button');
+    assert.equal(button.props['aria-expanded'], expanded);
+    assert.equal(button.props['data-sidebar-row'], 'shelf:persisted');
+    assert.equal(button.props['data-testid'], 'sidebar-persisted-shelf-toggle');
+    assert.equal(button.props.children[0].props.children, 'Persisted (2)');
+    button.props.onClick();
+  }
+  assert.equal(clicks, 2);
+});

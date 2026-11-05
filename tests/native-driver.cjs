@@ -70,6 +70,9 @@ app.on('browser-window-created', (_event, window) => {
       throw new Error('Timed out: ' + code);
     };
     try {
+      window.show();
+      window.focus();
+      window.webContents.focus();
       result.phase = process.env.T3_PERSISTED_TEST_PHASE;
       if (result.phase === 'corrupt') {
         await wait('!!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]")');

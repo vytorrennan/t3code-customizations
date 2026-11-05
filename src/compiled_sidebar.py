@@ -29,7 +29,8 @@ def patch(source, match_one, replace_once):
     sidebar = replace_once(sidebar, variant[0], variant[1] + '===`persisted`||' + variant[0], 'Persisted full cards')
     props = match_one(r'thread:([\w$]+),variant:([\w$]+),variantAction:', sidebar, 'native row props')
     sidebar = replace_once(sidebar, props[0], props[0].replace('variantAction:', f'persistedRef:__t3PersistedState.has({props[1]})?JSON.stringify([{props[1]}.environmentId,{props[1]}.id]):void 0,variantAction:'), 'Persisted row marker')
-    jsx, toggle_component = match_one(r'\(0,([\w$]+)\.jsx(?:s)?\)\(([\w$]+),\{onClick:[\w$]+\.toggle.onToggle,expanded:', source, 'native shelf toggle').groups()
+    jsx = match_one(r'\(0,([\w$]+)\.jsx\)\([\w$]+,\{marker:`pinned-header`', source, 'native marker jsx')[1]
+    toggle_component = '__t3PersistedRuntime.ShelfToggle'
     native_marker = match_one(r'function ([\w$]+)\(([\w$]+)\)\{(?:(?!function ).)*?\2.marker.endsWith\(`-placeholder`\)', source, 'native sortable marker', re.S)[1]
     # Newer minifiers emit an unbraced loop and a labelled marker switch.
     compact = re.search(r'for\(let ([\w$]+) of ([\w$]+)\)if\(\1.kind===`thread`\)([\w$]+).push\(([\w$]+)\(([\w$]+).get\(\1.key\),\1.section\)\);else ([\w$]+):switch', sidebar)
@@ -44,7 +45,7 @@ def patch(source, match_one, replace_once):
     item, item_list, accumulator, row, thread_map = output.groups()
     custom = (
         f'if({item}.marker===`persisted-header`){{{accumulator}.push((0,{jsx}.jsx)({native_marker},{{marker:`persisted-header`,"data-testid":`sidebar-persisted-header`,className:`mx-0.5 h-8`,children:'
-        f'(0,{jsx}.jsx)({toggle_component},{{onClick:__t3PersistedState.toggleCollapsed,expanded:!__t3PersistedState.collapsed,tone:`muted`,"data-testid":`sidebar-persisted-shelf-toggle`,children:`Persisted (${{__t3PersistedRows.length}})`}})}},`persisted-header`));continue}}'
+        f'(0,{jsx}.jsx)({toggle_component},{{jsx:{jsx}.jsx,onClick:__t3PersistedState.toggleCollapsed,expanded:!__t3PersistedState.collapsed,tone:`muted`,"data-testid":`sidebar-persisted-shelf-toggle`,children:`Persisted (${{__t3PersistedRows.length}})`}})}},`persisted-header`));continue}}'
         f'if({item}.marker===`persisted-divider`){{{accumulator}.push((0,{jsx}.jsx)({native_marker},{{marker:`persisted-divider`,"data-testid":`sidebar-persisted-end`,className:`mx-2.5 h-4 shrink-0 flex items-center`,children:(0,{jsx}.jsx)(`div`,{{className:`h-px w-full bg-sidebar-foreground/25`}})}},`persisted-divider`));continue}}'
         f'if({item}.marker===`persisted-placeholder`){{{accumulator}.push((0,{jsx}.jsx)({native_marker},{{marker:`persisted-placeholder`,className:`px-2 py-2 text-xs text-sidebar-muted-foreground`,children:`Right-click a thread to move it here.`}},`persisted-placeholder`));continue}}'
     )
@@ -146,14 +147,14 @@ def patch_modern(source, match_one, replace_once):
     props = match_one(r'thread:([\w$]+),variant:([\w$]+),', sidebar, 'native row props')
     sidebar = replace_once(sidebar, props[0], props[0] + f'persistedRef:__t3PersistedState.has({props[1]})?JSON.stringify([{props[1]}.environmentId,{props[1]}.id]):void 0,', 'Persisted row marker')
     jsx = match_one(r'\(0,([\w$]+)\.jsx\)\([\w$]+,\{marker:`pinned-header`', source, 'native marker jsx')[1]
-    toggle_component = match_one(r'\(0,[\w$]+\.jsx\)\(([\w$]+),\{role:`treeitem`,tabIndex:-1,"data-sidebar-row":', source, 'native shelf toggle')[1]
+    toggle_component = '__t3PersistedRuntime.ShelfToggle'
     native_marker = match_one(r'function ([\w$]+)\(([\w$]+)\)\{(?:(?!function ).)*?\2.marker.endsWith\(`-placeholder`\)', source, 'native sortable marker', re.S)[1]
     switch = match_one(r'([\w$]+):switch\(([\w$]+).marker\)\{', sidebar, 'native marker switch')
     label, item = switch.groups()
     push = match_one(r'case`pinned-header`:([\w$]+)\.push\(', sidebar[switch.end():], 'native marker output')[1]
     cases = (
         'case`persisted-header`:' + push + '.push((0,' + jsx + '.jsx)(' + native_marker + ',{marker:`persisted-header`,"data-testid":`sidebar-persisted-header`,className:`mx-0.5 h-8`,children:'
-        '(0,' + jsx + '.jsx)(' + toggle_component + ',{onClick:__t3PersistedState.toggleCollapsed,expanded:!__t3PersistedState.collapsed,tone:`muted`,"data-testid":`sidebar-persisted-shelf-toggle`,children:`Persisted (${__t3PersistedRows.length})`})}));break ' + label + ';'
+        '(0,' + jsx + '.jsx)(' + toggle_component + ',{jsx:' + jsx + '.jsx,onClick:__t3PersistedState.toggleCollapsed,expanded:!__t3PersistedState.collapsed,tone:`muted`,"data-testid":`sidebar-persisted-shelf-toggle`,children:`Persisted (${__t3PersistedRows.length})`})}));break ' + label + ';'
         'case`persisted-divider`:' + push + '.push((0,' + jsx + '.jsx)(' + native_marker + ',{marker:`persisted-divider`,"data-testid":`sidebar-persisted-end`,className:`mx-2.5 h-4 shrink-0 flex items-center`,children:(0,' + jsx + '.jsx)(`div`,{className:`h-px w-full bg-sidebar-foreground/25`})}));break ' + label + ';'
         'case`persisted-placeholder`:' + push + '.push((0,' + jsx + '.jsx)(' + native_marker + ',{marker:`persisted-placeholder`,className:`px-2 py-2 text-xs text-sidebar-muted-foreground`,children:`Right-click a thread to move it here.`}));break ' + label + ';'
     )

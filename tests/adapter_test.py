@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 import re
 import sys
+import subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'src'))
@@ -46,6 +47,39 @@ class AdapterTest(unittest.TestCase):
         result = patch.patch_sidebar(source)
         self.assertIn('__t3PersistedRuntime.use($react)', result)
         self.assertIn('(0,$jsx.jsx)', result)
+
+    def test_sorting_helpers_can_be_renamed_between_builds(self):
+        archive = patch.Archive('/opt/t3code-nightly-bin/resources/app.asar')
+        main = next(name for name in archive.entries if name.startswith('apps/server/dist/client/assets/main-') and name.endswith('.js'))
+        source = archive.read(main).decode()
+        marker = source.index('={pinned:[],active:[],working:[],snoozed:[],settled:[]}')
+        start = source.rfind('function ', 0, marker)
+        end = source.index('}function ', marker) + 1
+        body = source[start:end]
+        strategy = re.match(r'function ([\w$]+)\(', body)[1]
+        resolver = re.search(r'([\w$]+)\(([\w$]+),([\w$]+).key,([\w$]+)\(([\w$]+)\)\)', body)[1]
+        for name, renamed in [(strategy, '$futureSort'), (resolver, '$futureTarget')]:
+            source = re.sub(r'(?<![\w$])' + re.escape(name) + r'(?=\()', lambda _: renamed, source)
+        result = patch.patch_sidebar(source)
+        self.assertIn('__t3PersistedRuntime.wrap($futureTarget)', result)
+        self.assertIn('function $futureSort(', result)
+        checked = subprocess.run(['node', '--check', '--input-type=module'],
+                                 input=result, capture_output=True, text=True)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+
+    def test_private_toggle_implementation_is_not_an_integration_point(self):
+        archive = patch.Archive('/opt/t3code-nightly-bin/resources/app.asar')
+        main = next(name for name in archive.entries if name.startswith('apps/server/dist/client/assets/main-') and name.endswith('.js'))
+        source = archive.read(main).decode()
+        toggle = re.search(r'\(0,[\w$]+\.jsx\)\(([\w$]+),\{[^{}]*onClick:[\w$]+\.toggle.onToggle', source)[1]
+        start = source.index('function ' + toggle + '(')
+        end = source.index('}function ', start) + 1
+        changed = source[:start] + f'function {toggle}(props){{return null}}' + source[end:]
+        result = patch.patch_sidebar(changed)
+        self.assertIn('__t3PersistedRuntime.ShelfToggle', result)
+        checked = subprocess.run(['node', '--check', '--input-type=module'],
+                                 input=result, capture_output=True, text=True)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
 
     def test_unknown_layout_is_rejected_without_guessing(self):
         with self.assertRaises(patch.UnsupportedBuild):

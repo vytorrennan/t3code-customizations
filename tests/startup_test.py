@@ -65,6 +65,94 @@ class StartupTest(unittest.TestCase):
                         self.assertEqual(patch.main(), 1)
                     execute.assert_not_called()
 
+    def test_package_transaction_is_pending_without_adapter_notification_and_recovers(self):
+        import json
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            cache = home / '.cache/t3code-persisted'
+            retained = cache / 'builds/retained'
+            (retained / 'resources').mkdir(parents=True)
+            (retained / 't3code').touch()
+            (retained / 'resources/app.asar').touch()
+            (retained / 'persisted-self-contained').touch()
+            (cache / 'last-good').symlink_to(retained)
+            source = Path('/opt/t3code-nightly-bin')
+            with mock.object(Path, 'home', return_value=home), mock.object(patch, 'repair'), \
+                 mock.object(patch.Path, 'exists', autospec=True, side_effect=lambda path: True if str(path) == '/var/lib/pacman/db.lck' else path.is_file() or path.is_dir()), \
+                 mock.object(patch, 'signature', side_effect=AssertionError('Must not read changing package')), \
+                 mock.object(patch, 'prepare') as prepare, \
+                 mock.object(patch, 'report_failure') as report, \
+                 mock.object(sys, 'argv', ['patch.py', '--prepare-only']):
+                self.assertEqual(patch.main(), 0)
+                prepare.assert_not_called()
+                report.assert_not_called()
+            status = json.loads((cache / 'status.json').read_text())
+            self.assertIsNone(status['updateError'])
+            self.assertTrue(status['updatePending'])
+            self.assertEqual(status['executable'], str(retained / 't3code'))
+            # Simulate the completion-triggered preparation after the lock clears.
+            def prepare_new(source, destination):
+                (destination / 'resources').mkdir(parents=True)
+                for name in ['t3code', 'persisted-self-contained', 'resources/app.asar']:
+                    (destination / name).touch()
+                return destination / 't3code'
+
+            with mock.object(Path, 'home', return_value=home), mock.object(patch, 'repair'), \
+                 mock.object(patch, 'signature', return_value={'adapter': 'new'}), \
+                 mock.object(patch, 'prepare', side_effect=prepare_new) as prepare, \
+                 mock.object(patch, 'report_failure') as report, \
+                 mock.object(sys, 'argv', ['patch.py', '--prepare-only']):
+                self.assertEqual(patch.main(), 0)
+                prepare.assert_called_once()
+                report.assert_not_called()
+            status = json.loads((cache / 'status.json').read_text())
+            self.assertFalse(status['updatePending'])
+            self.assertIsNone(status['updateError'])
+            self.assertNotEqual(status['executable'], str(retained / 't3code'))
+            self.assertEqual((cache / 'last-good').resolve() / 't3code', Path(status['executable']))
+
+    def test_transaction_starting_during_preparation_is_also_pending(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+            retained = cache / 'retained'
+            (retained / 'resources').mkdir(parents=True)
+            for name in ['t3code', 'persisted-self-contained', 'resources/app.asar']:
+                (retained / name).touch()
+            (cache / 'last-good').symlink_to(retained)
+            with mock.object(patch, 'package_update_in_progress', side_effect=[False, True]), \
+                 mock.object(patch, 'signature', return_value={}), \
+                 mock.object(patch, 'prepare', side_effect=FileNotFoundError('package replaced')):
+                executable, failure = patch.select_build(Path('/opt/t3code-nightly-bin'), cache)
+            self.assertEqual(executable, retained / 't3code')
+            self.assertIsInstance(failure, patch.UpdateInProgress)
+
+    def test_first_launch_during_transaction_stops_without_false_adapter_alert(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with mock.object(Path, 'home', return_value=Path(temporary)), \
+                 mock.object(patch, 'repair'), \
+                 mock.object(patch, 'package_update_in_progress', return_value=True), \
+                 mock.object(patch, 'signature') as signature, \
+                 mock.object(patch, 'prepare') as prepare, \
+                 mock.object(patch, 'report_failure') as report, \
+                 mock.object(patch.os, 'execv') as execute, \
+                 mock.object(sys, 'argv', ['patch.py']):
+                self.assertEqual(patch.main(), 1)
+                signature.assert_not_called()
+                prepare.assert_not_called()
+                execute.assert_not_called()
+                report.assert_not_called()
+
+    def test_same_incompatible_update_is_reported_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+            executable = cache / 'retained/t3code'
+            failure = 'changed integration point'
+            self.assertTrue(patch.record_status(cache, executable, failure, 'package-a'))
+            self.assertFalse(patch.record_status(cache, executable, failure, 'package-a'))
+            self.assertTrue(patch.record_status(cache, executable, failure, 'package-b'))
+            patch.record_status(cache, executable, None)
+            self.assertTrue(patch.record_status(cache, executable, failure, 'package-b'))
+
     def test_desktop_registration_is_repaired_and_repair_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)

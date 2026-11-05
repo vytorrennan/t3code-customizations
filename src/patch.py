@@ -15,11 +15,19 @@ import tempfile
 from launchers import repair
 
 ROOT = Path(__file__).resolve().parent.parent
-ADAPTER_VERSION = 6
+ADAPTER_VERSION = 10
 
 
 class UnsupportedBuild(RuntimeError):
     pass
+
+
+class UpdateInProgress(RuntimeError):
+    """Transient package transaction or package replacement, not incompatibility."""
+
+
+def package_update_in_progress(source):
+    return source.resolve() == Path('/opt/t3code-nightly-bin') and Path('/var/lib/pacman/db.lck').exists()
 
 
 def replace_once(text, old, new, description):
@@ -80,13 +88,13 @@ def patch_sidebar(source):
     variant = match_one(r'([\w$]+)===`active`\|\|\1===`pinned`\|\|\1===`working`\?`card`:`slim`', sidebar, 'full native card variant')
     sidebar = replace_once(sidebar, variant[0], variant[1] + '===`persisted`||' + variant[0], 'full Persisted cards')
     renderer = match_one(r'let ([\w$]+)=\(([\w$]+),([\w$]+),([\w$]+)\)=>\{let [\w$]+=[\w$]+\([\w$]+\(\2.environmentId,\2.id\)\),[\w$]+=\3===`persisted`', sidebar, 'native row factory')[1]
-    toggle = match_one(r'\(0,([\w$]+)\.jsx\)\(([\w$]+),\{onClick:[\w$]+\.toggle.onToggle,expanded:[\w$]+\.toggle.expanded', source, 'native shelf toggle')
-    jsx, toggle_component = toggle.groups()
+    jsx = match_one(r'\(0,([\w$]+)\.jsx\)\([\w$]+,\{marker:`pinned-header`', source, 'native marker jsx')[1]
+    toggle_component = '__t3PersistedRuntime.ShelfToggle'
     output = match_one(r'([\w$]+)=\[\(0,' + re.escape(jsx) + r'\.jsx\)\([\w$]+,\{projectByKey:.*?`draft-sessions`\)\];for\(let', sidebar, 'sidebar output', re.S)
     accumulator = output[1]
     persisted_header = (
         f'(0,{jsx}.jsx)(`li`,{{className:`mx-0.5 h-8 list-none`,"data-testid":`sidebar-persisted-header`,children:'
-        f'(0,{jsx}.jsx)({toggle_component},{{onClick:__t3PersistedState.toggleCollapsed,expanded:!__t3PersistedState.collapsed,tone:`muted`,'
+        f'(0,{jsx}.jsx)({toggle_component},{{jsx:{jsx}.jsx,onClick:__t3PersistedState.toggleCollapsed,expanded:!__t3PersistedState.collapsed,tone:`muted`,'
         f'"data-testid":`sidebar-persisted-shelf-toggle`,children:`Persisted (${{__t3PersistedRows.length}})`}})}},`persisted-header`)'
     )
     empty = f'(0,{jsx}.jsx)(`li`,{{className:`list-none px-2 py-2 text-xs text-sidebar-muted-foreground`,children:`Right-click a thread to move it here.`}},`persisted-empty`)'
@@ -137,13 +145,14 @@ def patch_native_drag(sidebar, source, react, pinned):
     items = match_one(r'([\w$]+)=\(0,' + re.escape(react) + r'\.useMemo\)\(\(\)=>\{let ([\w$]+)=\([\w$]+,[\w$]+\)=>[\w$]+.map\([\w$]+=>\(\{kind:`thread`,key:.*?\},\[([^\]]+)\]\)', sidebar, 'native sortable items', re.S)
     item_name, make_items, _ = items.groups()
     replacement = items[0].replace(f'if({pinned}.length+', f'if(__t3PersistedRows.length+{pinned}.length+', 1)
-    replacement = replacement.replace('let t=[{kind:`marker`,marker:`pinned-header`}]', f'let t=[...(__t3PersistedState.enabled?[{{kind:`marker`,marker:`persisted-header`}},...(__t3PersistedState.collapsed?[]:[...(__t3PersistedRows.length?{make_items}(__t3PersistedRows,`persisted`):[{{kind:`marker`,marker:`persisted-placeholder`}}]),{{kind:`marker`,marker:`persisted-divider`}}])]:[]),{{kind:`marker`,marker:`pinned-header`}}]')
+    list_init = match_one(r'let ([\w$]+)=\[\{kind:`marker`,marker:`pinned-header`\}\]', replacement, 'native sortable list initialization')
+    replacement = replacement.replace(list_init[0], f'let {list_init[1]}=[...(__t3PersistedState.enabled?[{{kind:`marker`,marker:`persisted-header`}},...(__t3PersistedState.collapsed?[]:[...(__t3PersistedRows.length?{make_items}(__t3PersistedRows,`persisted`):[{{kind:`marker`,marker:`persisted-placeholder`}}]),{{kind:`marker`,marker:`persisted-divider`}}])]:[]),{{kind:`marker`,marker:`pinned-header`}}]', 1)
     if replacement == items[0] or 'marker:`persisted-header`' not in replacement:
         raise UnsupportedBuild('Native sortable item list changed.')
     replacement = replacement.replace('},[', '},[__t3PersistedRows,__t3PersistedState.collapsed,__t3PersistedState.enabled,', 1)
     sidebar = replace_once(sidebar, items[0], replacement, 'Persisted sortable items')
-    row_loop = f'for(let e of {item_name}){{if(e.kind===`thread`){{'
-    sidebar = replace_once(sidebar, row_loop, row_loop + 'if(e.section===`persisted`)continue;', 'Persisted rows rendered once')
+    row_loop = match_one(r'for\(let ([\w$]+) of ' + re.escape(item_name) + r'\)\{if\(\1.kind===`thread`\)\{', sidebar, 'native row loop')
+    sidebar = replace_once(sidebar, row_loop[0], row_loop[0] + f'if({row_loop[1]}.section===`persisted`)continue;', 'Persisted rows rendered once')
     # The sensor otherwise clamps cards below the Pinned heading.
     clamp = match_one(r'if\(([\w$]+)&&([\w$]+)\)\{let [\w$]+=[\w$]+.getBoundingClientRect\(\).*?else ([\w$]+).current=0;', sidebar, 'native drag upper boundary', re.S)
     section = match_one(r'let ([\w$]+)=' + re.escape(map_name) + r'\.get\([\w$]+\);if\(\1===void 0\)return;', sidebar, 'native drag source section')[1]
@@ -299,6 +308,17 @@ def prepare(source, destination):
     electron_source = replace_once(electron_source, desktop_handler[0], desktop_handler[0] + '\n' + desktop_handler[1] + '={...' + desktop_handler[1] + ',execTarget:' + launcher + '};', 'stable desktop URL handler')
     changes = {main: main_source.encode(), boot: boot_source.encode(), preload: preload_source.encode(), html: html_source.encode(), electron_main: electron_source.encode()}
 
+    # Google's summary can omit Gemini while still covering shared Claude/GPT.
+    from antigravity_quota import patch as patch_quota
+    quota_bundles = [name for name in archive.entries
+                     if name.startswith('apps/server/dist/') and name.endswith('.mjs')
+                     and b'// src/provider/antigravityUsageLimits.ts' in archive.read(name)]
+    if len(quota_bundles) != 1:
+        raise UnsupportedBuild('Cannot identify the Antigravity usage bundle.')
+    quota_bundle = quota_bundles[0]
+    quota_source = patch_quota(archive.read(quota_bundle).decode())
+    changes[quota_bundle] = quota_source.encode()
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix='persisted-build-', dir=destination.parent))
     try:
@@ -313,13 +333,13 @@ def prepare(source, destination):
         # Check transformed code before it can replace a working overlay.
         check_environment = os.environ.copy()
         check_environment['ELECTRON_RUN_AS_NODE'] = '1'
-        for name, content in [('keypad.js', keypad), ('ui.mjs', main_source), ('boot.cjs', boot_source), ('preload.cjs', preload_source), ('electron.cjs', electron_source)]:
+        for name, content in [('keypad.js', keypad), ('ui.mjs', main_source), ('boot.cjs', boot_source), ('preload.cjs', preload_source), ('electron.cjs', electron_source), ('quota.mjs', quota_source)]:
             checked = staging / name
             checked.write_text(content)
             subprocess.run([str(source / 't3code'), '--check', str(checked)], check=True, capture_output=True, env=check_environment)
             checked.unlink()
-        if signature(source) != expected:
-            raise UnsupportedBuild('The installed package changed during preparation; retaining the previous customized app')
+        if package_update_in_progress(source) or signature(source) != expected:
+            raise UpdateInProgress('The installed package changed during preparation')
         if destination.exists():
             shutil.rmtree(destination)
         staging.rename(destination)
@@ -336,8 +356,8 @@ def select_build(source, cache, destination=None):
     with (cache / 'prepare.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            if source.resolve() == Path('/opt/t3code-nightly-bin') and Path('/var/lib/pacman/db.lck').exists():
-                raise UnsupportedBuild('The package manager is still updating T3 Code')
+            if package_update_in_progress(source):
+                raise UpdateInProgress('The package manager is still updating T3 Code')
             fingerprint = hashlib.sha256(json.dumps(signature(source), sort_keys=True).encode()).hexdigest()[:20]
             target = Path(destination) if destination else cache / 'builds' / fingerprint
             executable = prepare(source, target)
@@ -349,15 +369,35 @@ def select_build(source, cache, destination=None):
                 cleanup_builds(cache / 'builds', target)
             return executable, None
         except Exception as error:
+            if not isinstance(error, UpdateInProgress) and package_update_in_progress(source):
+                error = UpdateInProgress('The package manager started updating T3 Code during preparation')
             previous = last_good.resolve()
             if destination is None and (previous / 'persisted-self-contained').exists() and (previous / 't3code').is_file() and (previous / 'resources/app.asar').is_file():
-                return previous / 't3code', str(error)
-            raise
+                return previous / 't3code', error if isinstance(error, UpdateInProgress) else str(error)
+            raise error
 
 
-def report_failure(message):
+def record_status(cache, executable, failure, failed_build=None, pending=False):
+    """Publish status and notify once per incompatible package/adapter pair."""
+    status = cache / 'status.json'
+    document = {'executable': str(executable), 'updateError': failure,
+                'failedBuild': failed_build if failure else None, 'updatePending': pending}
+    with (cache / 'prepare.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            previous = json.loads(status.read_text())
+        except (OSError, ValueError):
+            previous = {}
+        changed = any(previous.get(key) != document[key] for key in ('updateError', 'failedBuild'))
+        temporary = status.with_suffix('.json.tmp')
+        temporary.write_text(json.dumps(document, indent=2) + '\n')
+        temporary.replace(status)
+    return changed
+
+
+def report_failure(message, notify=True):
     print('[T3 Customizations] ' + message, file=sys.stderr)
-    if shutil.which('notify-send'):
+    if notify and shutil.which('notify-send'):
         subprocess.run(['notify-send', '-u', 'critical', 'T3 Code customizations', message], check=False)
 
 
@@ -375,15 +415,24 @@ def main():
             repair()
         cache = Path.home() / '.cache/t3code-persisted'
         executable, failure = select_build(source, cache, args.destination)
+    except UpdateInProgress:
+        # There is no retained build yet. Do not inspect or launch a partial package.
+        print('[T3 Customizations] Waiting for the package update to finish; no customized build is available yet.', file=sys.stderr)
+        return 1
     except Exception as error:
         report_failure(f'Cannot prepare customizations: {error}. No customized build is available. The official app was not started. Saved membership is retained.')
         return 1
-    status = cache / 'status.json'
+    pending = isinstance(failure, UpdateInProgress)
+    if pending:
+        failure = None
+    notify = True
     if not args.destination:
-        status.write_text(json.dumps({'executable': str(executable), 'updateError': failure}, indent=2) + '\n')
+        failed_build = (hashlib.sha256(json.dumps(signature(source), sort_keys=True).encode()).hexdigest()
+                        if failure else None)
+        notify = record_status(cache, executable, failure, failed_build, pending=pending)
     if failure:
         message = f'The installed update needs a customization adapter change: {failure}. Keeping the last customized T3 Code version.'
-        report_failure(message)
+        report_failure(message, notify=notify)
     if args.prepare_only:
         print(executable)
         return 0
