@@ -59,8 +59,8 @@ def install_guard(root):
         '[Path]\nPathChanged=/opt/t3code-nightly-bin/resources/app.asar\n'
         'PathChanged=/opt/t3code-nightly-bin/t3code\n'
         'PathChanged=/var/lib/pacman\n'
-        'PathChanged=' + str(home / '.local/share/applications/t3code.desktop') + '\n'
-        'PathChanged=' + str(home / '.local/share/applications/com.t3tools.T3Code.desktop') + '\n'
+        # Desktop entries are repaired by every launch. Watching them made T3's own
+        # URL handler registration start a full preparation during each startup.
         'Unit=t3code-customizations.service\n'
         '[Install]\nWantedBy=default.target\n')
     if not shutil.which('systemctl'):

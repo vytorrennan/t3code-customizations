@@ -256,13 +256,60 @@ class Archive:
                     output.write(source.read(old_size))
 
 
+DIGEST_CACHE = Path.home() / '.cache/t3code-persisted/digests.json'
+
+
+def _stat_key(stat):
+    # ctime changes on every content write and cannot be set back with utime,
+    # so an in-place rewrite that restores size and mtime still misses the cache.
+    return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+
+
+def _load_digest_cache():
+    try:
+        cache = json.loads(DIGEST_CACHE.read_text())
+        return cache if isinstance(cache, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _store_digest_cache(cache):
+    try:
+        cache = {path: entry for path, entry in cache.items() if os.path.exists(path)}
+        DIGEST_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        temporary = DIGEST_CACHE.with_name(f'{DIGEST_CACHE.name}.{os.getpid()}.tmp')
+        temporary.write_text(json.dumps(cache, indent=2, sort_keys=True) + '\n')
+        temporary.replace(DIGEST_CACHE)
+    except OSError:
+        pass  # The cache only saves time; hashing stays authoritative.
+
+
+def file_digest(file, cache):
+    """SHA-256 of a file, reusing a cached digest while its inode metadata is unchanged."""
+    key = str(file)
+    before = _stat_key(file.stat())
+    entry = cache.get(key)
+    if isinstance(entry, dict) and entry.get('stat') == before:
+        return entry['sha256'], False
+    with file.open('rb') as stream:
+        digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+    if _stat_key(file.stat()) == before:  # Do not cache a file that changed while it was read.
+        cache[key] = {'stat': before, 'sha256': digest}
+        return digest, True
+    return digest, False
+
+
 def signature(source):
     files = [source / 'resources/app.asar', source / 't3code'] + sorted((ROOT / 'src').glob('*'))
     inputs = {}
+    cache = _load_digest_cache()
+    changed = False
     for file in files:
         if file.is_file():
-            with file.open('rb') as stream:
-                inputs[str(file)] = hashlib.file_digest(stream, 'sha256').hexdigest()
+            inputs[str(file)], updated = file_digest(file, cache)
+            changed |= updated
+    if changed:
+        _store_digest_cache(cache)
     return {'adapter': ADAPTER_VERSION, 'inputs': inputs}
 
 

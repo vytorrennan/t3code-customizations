@@ -25,6 +25,19 @@ class StartupTest(unittest.TestCase):
             __import__('os').utime(archive, ns=(before.st_atime_ns, before.st_mtime_ns))
             self.assertNotEqual(patch.signature(source), original)
 
+    def test_cached_digests_skip_rehashing_until_the_file_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary)
+            (source / 'resources').mkdir()
+            archive = source / 'resources/app.asar'
+            archive.write_bytes(b'old version')
+            with mock.object(patch, 'DIGEST_CACHE', source / 'digests.json'):
+                original = patch.signature(source)
+                with mock.object(patch.hashlib, 'file_digest', side_effect=AssertionError('Must reuse cached digest')):
+                    self.assertEqual(patch.signature(source), original)
+                archive.write_bytes(b'new version')
+                self.assertNotEqual(patch.signature(source), original)
+
     def test_update_keeps_a_complete_customized_app_when_new_package_is_incompatible(self):
         with tempfile.TemporaryDirectory(prefix='t3-update-regression-') as temporary:
             directory = Path(temporary)
