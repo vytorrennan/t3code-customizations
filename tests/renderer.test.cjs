@@ -123,3 +123,71 @@ test('Persisted owns an accessible toggle independently of native shelf componen
   }
   assert.equal(clicks, 2);
 });
+
+test('Persisted members use native Working placement and return in their saved order', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'persisted-working-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const store = new Store(directory);
+  const first = { environmentId: 'env-a', id: 'first' };
+  const busy = { environmentId: 'env-a', id: 'shared-id' };
+  const last = { environmentId: 'env-b', id: 'shared-id' };
+  const other = { environmentId: 'env-a', id: 'other' };
+  const members = [first, busy, last];
+  for (const thread of members) store.update({ type: 'add', ref: { environmentId: thread.environmentId, threadId: thread.id } });
+  const before = fs.readFileSync(store.file, 'utf8');
+  let writes = 0;
+  const context = vm.createContext({ console, queueMicrotask, t3PersistedBridge: {
+    read: () => store.read(), subscribe: () => {}, update: async operation => { writes++; return store.update(operation); },
+  } });
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../src/renderer.js'), 'utf8'), context);
+  await new Promise(resolve => setImmediate(resolve));
+  const addon = context.__t3Persisted;
+  const threadKey = thread => JSON.stringify([thread.environmentId, thread.id]);
+  const React = { useMemo: fn => fn() };
+  const nativeModel = ({ busyStatus, workingExpanded = true, workingEnabled = true } = {}) => {
+    const task = { ...busy, runtime: { status: busyStatus ?? 'idle' } };
+    const working = workingEnabled && busyStatus ? [task, other] : [];
+    const active = working.length ? [first, last] : [first, task, last, other];
+    const visibleWorking = workingExpanded ? working : [];
+    const rows = [...active, ...visibleWorking];
+    return {
+      searchableThreads: [first, task, last, other],
+      pinnedThreads: [], activeThreads: active, workingThreads: working,
+      snoozedThreads: [], settledThreads: [], renderedSettledThreads: [], visibleSnoozedThreads: [], visibleWorkingThreads: visibleWorking,
+      workingShelfEnabled: workingEnabled, workingShelfExpanded: workingExpanded,
+      threadByKey: new Map(rows.map(thread => [threadKey(thread), thread])),
+      sectionByThreadKey: new Map([...active.map(thread => [threadKey(thread), 'active']), ...visibleWorking.map(thread => [threadKey(thread), 'working'])]),
+      draggableThreadKeys: new Set(rows.map(threadKey)), orderedThreadKeys: rows.map(threadKey),
+      pinnedKeys: [], activeKeys: active.map(threadKey), pinnedKeysById: new Map(),
+      activeKeysById: new Map(active.map(thread => [threadKey(thread), 'order'])), settledThreadKeys: new Set(), snoozedThreadKeys: new Set(),
+    };
+  };
+  for (const busyStatus of ['working', 'waiting']) {
+    for (const workingExpanded of [true, false]) {
+      for (const collapsed of [true, false]) {
+        const native = nativeModel({ busyStatus, workingExpanded });
+        const state = { ...addon.getSnapshot(), collapsed };
+        const model = addon.classify(React, native, state, threadKey);
+        assert.deepEqual(Array.from(model.persistedThreads, threadKey), [threadKey(first), threadKey(last)]);
+        assert.deepEqual(Array.from(model.workingThreads, threadKey), [threadKey(busy), threadKey(other)]);
+        assert.deepEqual(Array.from(model.visibleWorkingThreads, threadKey), workingExpanded ? [threadKey(busy), threadKey(other)] : []);
+        const expected = [...(collapsed ? [] : [first, last]), ...(workingExpanded ? [busy, other] : [])].map(threadKey);
+        assert.deepEqual(Array.from(model.orderedThreadKeys), expected);
+        assert.equal(model.sectionByThreadKey.get(threadKey(busy)), workingExpanded ? 'working' : undefined);
+        const items = addon.items(workingExpanded ? [{kind:'thread',key:threadKey(busy),section:'working'}] : [], model.persistedThreads, state, threadKey);
+        assert.equal(Array.from(items).filter(item => item.key === threadKey(busy)).length, workingExpanded ? 1 : 0, 'Never duplicate a member across shelves');
+        assert.equal(state.has(busy), true, 'Working placement must retain saved membership');
+        assert.equal(native.workingThreads.length, 2, 'Keep the native model untouched');
+      }
+    }
+  }
+  for (const options of [{}, { busyStatus: 'working', workingEnabled: false }]) {
+    const model = addon.classify(React, nativeModel(options), addon.getSnapshot(), threadKey);
+    assert.deepEqual(Array.from(model.persistedThreads, threadKey), members.map(threadKey), 'Restore the exact saved order when work finishes or Working is disabled');
+    assert.equal(model.workingThreads.length, 0);
+    assert.deepEqual(Array.from(model.activeThreads, threadKey), [threadKey(other)]);
+  }
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(writes, 0, 'Runtime status changes must never rewrite membership');
+  assert.equal(fs.readFileSync(store.file, 'utf8'), before);
+});

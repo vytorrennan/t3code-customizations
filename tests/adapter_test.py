@@ -81,6 +81,19 @@ class AdapterTest(unittest.TestCase):
                                  input=result, capture_output=True, text=True)
         self.assertEqual(checked.returncode, 0, checked.stderr)
 
+    def test_thread_menu_option_order_can_change(self):
+        from thread_menu import inspect_thread_menu
+        archive = patch.Archive('/opt/t3code-nightly-bin/resources/app.asar')
+        main = next(name for name in archive.entries if name.startswith('apps/server/dist/client/assets/main-') and name.endswith('.js'))
+        source = archive.read(main).decode()
+        menu = inspect_thread_menu(source)
+        changed = menu['prefix'] + '{' + ','.join(reversed(menu['properties'])) + '}' + menu['suffix']
+        result = patch.patch_sidebar(changed)
+        self.assertIn('__t3PersistedRuntime.menu(', result)
+        checked = subprocess.run(['node', '--check', '--input-type=module'],
+                                 input=result, capture_output=True, text=True)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+
     def test_unknown_layout_is_rejected_without_guessing(self):
         with self.assertRaises(patch.UnsupportedBuild):
             patch.patch_sidebar('function unknown(){return null}')

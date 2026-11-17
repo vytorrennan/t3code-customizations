@@ -33,7 +33,7 @@ def patch_user_agent(source):
 
 
 def patch_sequential_endpoints(source):
-    """Query endpoints in order and stop at the first usable report."""
+    """Retain upstream endpoint priority, or repair the old most-depleted merge."""
     if '__t3QuotaWindows.length' in source or 'for (const endpoint of ENDPOINTS)' in source:
         return source
     template = """const responses = yield* forEach(ENDPOINTS, (endpoint) => gen(function* () {
@@ -45,6 +45,17 @@ def patch_sequential_endpoints(source):
         if (!previous || window.usedPercent > previous.usedPercent) windows.set(window.id, window);
     }
     return [...windows.values()];"""
+    # Upstream now keeps the first endpoint's value, with endpoint order chosen
+    # by authentication method. Preserve that implementation byte for byte.
+    bindings = ['responses', 'forEach', 'ENDPOINTS', 'endpoint', 'gen', 'windows', 'window']
+    prefix = template[:template.index('    for (const window')]
+    first_wins = 'if (!windows.has(window.id)) windows.set(window.id, window);'
+    for loop in [f'for (const window of responses.flat()) {first_wins}',
+                 f'for (const window of responses.flat()) {{ {first_wins} }}']:
+        upstream = prefix + loop + ' return [...windows.values()];'
+        if template_pattern(upstream, bindings, ['BODY']).search(source):
+            match_template(source, upstream, 'Antigravity endpoint priority', bindings, ['BODY'])
+            return source
     match = match_template(source, template, 'Antigravity quota endpoint selection',
                            bindings=['responses', 'forEach', 'ENDPOINTS', 'endpoint',
                                      'gen', 'windows', 'window', 'previous'], bodies=['BODY'])

@@ -118,13 +118,16 @@
   globalThis.__t3Persisted = {
     ShelfToggle,
     classify: (React, native, state, threadKey) => React.useMemo(() => {
+      // Keep T3's own Working classification, including waiting and any native
+      // transition timing. Membership stays saved while those rows are away.
+      const workingKeys = new Set(native.workingThreads.map(threadKey));
       const members = state.sort(native.searchableThreads.filter(thread => {
         if (!state.has(thread)) return false;
         if (thread.settledOverride === 'settled') {
           globalThis.__t3Persisted.prune(thread);
           return false;
         }
-        return true;
+        return !workingKeys.has(threadKey(thread));
       }));
       const keys = new Set(members.map(threadKey));
       const result = { ...native, persistedThreads: members };

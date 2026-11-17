@@ -25,6 +25,22 @@ class StartupTest(unittest.TestCase):
             __import__('os').utime(archive, ns=(before.st_atime_ns, before.st_mtime_ns))
             self.assertNotEqual(patch.signature(source), original)
 
+    def test_nested_parser_changes_invalidate_prepared_builds(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            parser = root / 'src/vendor/parser.mjs'
+            parser.parent.mkdir(parents=True)
+            parser.write_text('export const version=1;')
+            with mock.object(patch, 'ROOT', root), mock.object(patch, 'DIGEST_CACHE', root / 'digests.json'):
+                original = patch.signature(root / 'official')
+                self.assertIn(str(parser), original['inputs'])
+                parser.write_text('export const version=2;')
+                self.assertNotEqual(patch.signature(root / 'official'), original)
+                generated = root / 'src/__pycache__/cache.pyc'
+                generated.parent.mkdir()
+                generated.write_bytes(b'cache')
+                self.assertNotIn(str(generated), patch.signature(root / 'official')['inputs'])
+
     def test_cached_digests_skip_rehashing_until_the_file_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary)

@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 from launchers import repair
+from thread_menu import patch_thread_menu
 
 ROOT = Path(__file__).resolve().parent.parent
 ADAPTER_VERSION = 10
@@ -111,11 +112,7 @@ def patch_sidebar(source):
     sidebar = replace_once(sidebar, output[0], output[0].replace('];for(let', insertion, 1), 'Persisted shelf at top')
     sidebar, source = patch_native_drag(sidebar, source, react, pinned)
 
-    menu = match_one(r'([\w$]+)=await ([\w$]+)\(\(\)=>([\w$]+)\.contextMenu.show\((([\w$]+)\(\{canOperate:.*?branch:([\w$]+)\.branch.*?snoozePresets:[\w$]+\}\)),([\w$]+)\)\);', sidebar, 'single-thread native menu', re.S)
-    result, attempt, platform, items, builder, menu_thread, position = menu.groups()
-    replaced_menu = menu[0].replace(f'.show({items},', f'.show(__t3PersistedRuntime.menu({items},{menu_thread}),', 1)
-    replaced_menu += f'if({result}._tag!==`Failure`&&__t3PersistedRuntime.isAction({result}.value)){{await __t3PersistedRuntime.handle({result}.value,{menu_thread});return}}'
-    sidebar = replace_once(sidebar, menu[0], replaced_menu, 'Persisted native menu action')
+    sidebar = patch_thread_menu(sidebar)
     selection = match_one(r'if\(([\w$]+)\.hasSelection\(\)&&\1.selectedThreadKeys.has\(([\w$]+)\)\)\{await ([\w$]+)\(([\w$]+)\);return\}', sidebar, 'single selected thread menu')
     sidebar = replace_once(sidebar, selection[0], selection[0].replace('.hasSelection()', '.selectedThreadKeys.size>1', 1), 'single selected thread support')
     empty_guard = f'{pinned}.length+{active}.length+{working}.length+{snoozed}.length+{settled}.length===0?'
@@ -300,7 +297,9 @@ def file_digest(file, cache):
 
 
 def signature(source):
-    files = [source / 'resources/app.asar', source / 't3code'] + sorted((ROOT / 'src').glob('*'))
+    adapter_files = sorted(file for file in (ROOT / 'src').rglob('*')
+                           if file.is_file() and '__pycache__' not in file.parts)
+    files = [source / 'resources/app.asar', source / 't3code', *adapter_files]
     inputs = {}
     cache = _load_digest_cache()
     changed = False

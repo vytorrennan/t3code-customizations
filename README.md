@@ -11,6 +11,7 @@ The first customization adds a **Persisted** thread list to T3 Code's sidebar.
 - Expanded members use T3's full native thread cards.
 - Drag a Persisted card just like a normal T3 thread to set its order. It uses the native drag sensor, card preview, collision detection, and row animations.
 - New members go to the bottom. Existing members initially follow the order they were added. Activity does not change this order.
+- While T3 classifies a Persisted member as working or waiting in its Working shelf, the thread appears there. When it leaves Working, it returns to its saved Persisted position. This follows the native shelf setting and keeps membership unchanged.
 - A divider marks the end of the expanded list.
 - Persisted owns its header button. Changes to T3's private shelf toggle component do not require a matching adapter change.
 - Collapse and expansion reuse T3's native shelf animations and reduced-motion handling.
@@ -27,7 +28,7 @@ Run the regression tests with `node --test tests/terminal-keypad.test.cjs`.
 
 ## Antigravity quotas
 
-Requests Google's quota summary as Antigravity Hub 2.28.2. Older bundled Hub user agents suppress Gemini and Argon summary buckets. Keeps separate Gemini weekly and 5-hour windows and the Gemini 4 Argon weekly window. Uses the first usable endpoint, matching Antigravity's daily endpoint preference, instead of mixing differing endpoint reports. Per-model quotas supplement missing families on older accounts. Disabled windows stay hidden.
+Requests Google's quota summary as Antigravity Hub 2.28.2. Older bundled Hub user agents suppress Gemini and Argon summary buckets. Keeps separate Gemini weekly and 5-hour windows and the Gemini 4 Argon weekly window. Preserves upstream endpoint selection when it already keeps the preferred endpoint's value, including the different personal and business OAuth endpoint orders. Older builds that chose the most depleted value across endpoints use the first usable report instead. Per-model quotas supplement missing families on older accounts. Disabled windows stay hidden.
 
 Run the quota behavior and build compatibility tests with `python3 tests/antigravity_quota_test.py`.
 
@@ -36,9 +37,9 @@ Run the quota behavior and build compatibility tests with `python3 tests/antigra
 - Linux with Python 3, `cp`, and a working T3 Code Nightly installation.
 - The installer currently targets the `t3code-nightly-bin` package at `/opt/t3code-nightly-bin`, its `/usr/bin/t3code-nightly` launcher, and its desktop entries.
 - T3's current sidebar. The optional legacy sidebar is not customized.
-- Node.js is needed only for the JavaScript unit tests. The launcher uses the installed Electron runtime to check transformed JavaScript.
+- Node.js is needed only for the JavaScript unit tests. Acorn is bundled under `src/vendor/acorn/` with its MIT license; no package installation or download is needed at launch. The launcher uses the installed Electron runtime to check transformed JavaScript.
 
-Tested on `0.1.7-nightly.20261103.4119`, including its React Compiler sidebar, shared drag-plan module, and restructured Antigravity quota fetch. The earlier sidebar adapters are also retained. Other operating systems and installation layouts have not been tested.
+Tested on `0.1.10-nightly.20261116.4800`, including its React Compiler sidebar, shared drag-plan module, and restructured Antigravity quota fetch. The earlier sidebar adapters are also retained. Other operating systems and installation layouts have not been tested.
 
 ## Install
 
@@ -58,7 +59,7 @@ Quit and reopen T3 Code once to activate the sidebar and keypad fixes. Launching
 
 Continue updating the official nightly through your usual package manager, then open T3 normally. At launch, the customization checks the installed package and generates a fresh patched copy when needed. Package digests are cached in `~/.cache/t3code-persisted/digests.json` and reused only while each file's device, inode, size, mtime and ctime are unchanged, so a normal launch does not re-hash the ~400MB package. A systemd user path unit also prepares the customization after package transactions. Every launch repairs either desktop entry if T3 rewrote it; the watcher does not track desktop entries, because T3 rewrites them during each startup. Both command names supplied by the package have user launchers. The installed app's own URL registration also points back to the custom launcher.
 
-The quota adapter discovers generated helper and local variable names and tolerates whitespace, indentation, comments between tokens, and equivalent string quotes at its integration points. Compatibility tests simulate these changes against the installed nightly. Sidebar adapters discover generated names too, including sorting and drag helpers. These tests cover specific transformations, not all possible compiler output. The sidebar still patches private compiled code, so a compiler rearrangement can require maintenance even when the visible sidebar is unchanged. There is no guarantee that only major updates will need adapter changes. Compatibility is checked by code structure, not by the nightly's version number.
+The quota adapter discovers generated helper and local variable names and tolerates whitespace, indentation, comments between tokens, and equivalent string quotes at its integration points. Compatibility tests simulate these changes against the installed nightly. Sidebar adapters discover generated names too, including sorting and drag helpers. The thread-menu and empty-sidebar adapters use a bundled JavaScript parser to match syntax rather than text. Menu arguments, option order, generated names, whitespace, comments, equivalent property access, and changes to the number of sidebar groups are covered by regression tests. The parser is used during preparation only and does not execute the bundled app code. These tests cover specific transformations, not all possible compiler output. The sidebar still patches private compiled code, so a compiler rearrangement can require maintenance even when the visible sidebar is unchanged. There is no guarantee that only major updates will need adapter changes. Compatibility is checked by code structure, not by the nightly's version number.
 
 While pacman holds its transaction lock, the launcher quietly uses the last prepared customized build and records `updatePending: true`, with no adapter error or desktop notification. It does not fingerprint the changing package. The watcher prepares again after the transaction finishes and clears the pending state. If no customized build exists yet, startup stops with a message on stderr until preparation can safely run.
 
@@ -122,6 +123,8 @@ With the supported nightly installed, check the adapter:
 
 ```sh
 python3 tests/adapter_test.py
+python3 tests/thread_menu_test.py
+python3 tests/sidebar_syntax_test.py
 python3 tests/startup_test.py
 ```
 

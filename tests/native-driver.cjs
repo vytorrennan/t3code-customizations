@@ -154,7 +154,15 @@ app.on('browser-window-created', (_event, window) => {
         const image = await window.webContents.capturePage();
         fs.writeFileSync(path.join(process.env.T3_PERSISTED_TEST_OUTPUT, 'persisted.png'), image.toPNG());
         choice = 'Remove from Persisted';
-        await evaluate('document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]").dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,clientX:80,clientY:160}))');
+        // A real pointer sequence clears the native context-menu suppression
+        // after Escape; dispatching only a contextmenu event skips that reset.
+        const menuPoint = await evaluate(`(() => {
+          const rect=document.querySelector('li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]').getBoundingClientRect();
+          return {x:Math.round(rect.left+rect.width/2),y:Math.round(rect.top+rect.height/2)};
+        })()`);
+        window.webContents.sendInputEvent({type:'mouseMove',...menuPoint});
+        window.webContents.sendInputEvent({type:'mouseDown',...menuPoint,button:'right',clickCount:1});
+        window.webContents.sendInputEvent({type:'mouseUp',...menuPoint,button:'right',clickCount:1});
         await wait('globalThis.__t3Persisted.getSnapshot().members.length===1');
         result.removeMenu = lastMenu;
         result.restoredNativeCard = await evaluate('!!document.querySelector("li[data-thread-item*=persisted-test-thread-1] [data-testid=sidebar-row-card]")');
@@ -162,6 +170,7 @@ app.on('browser-window-created', (_event, window) => {
       result.ok = true;
     } catch (error) {
       result.error = String(error);
+      result.lastMenu = lastMenu;
       result.body = await evaluate('document.body.innerText.slice(0,2000)').catch(() => 'unavailable');
       result.testIds = await evaluate('Array.from(document.querySelectorAll("[data-testid]")).map(e=>e.dataset.testid)').catch(() => []);
     }

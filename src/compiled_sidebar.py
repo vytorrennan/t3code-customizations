@@ -1,5 +1,6 @@
 """Adapter for the extracted sidebar model and React Compiler builds."""
 import re
+from thread_menu import patch_thread_menu, patch_empty_sidebar
 
 
 def patch(source, match_one, replace_once):
@@ -50,11 +51,7 @@ def patch(source, match_one, replace_once):
         f'if({item}.marker===`persisted-placeholder`){{{accumulator}.push((0,{jsx}.jsx)({native_marker},{{marker:`persisted-placeholder`,className:`px-2 py-2 text-xs text-sidebar-muted-foreground`,children:`Right-click a thread to move it here.`}},`persisted-placeholder`));continue}}'
     )
     sidebar = replace_once(sidebar, output[0], output[0] + custom, 'Persisted native markers')
-    menu = match_one(r'([\w$]+)=await ([\w$]+)\(\(\)=>([\w$]+)\.contextMenu.show\((([\w$]+)\(\{canOperate:.*?branch:([\w$]+)\.branch.*?snoozePresets:[\w$]+\}\)),([\w$]+)\)\);', sidebar, 'native thread menu', re.S)
-    result, _, _, menu_items, _, thread, _ = menu.groups()
-    replacement = menu[0].replace(f'.show({menu_items},', f'.show(__t3PersistedRuntime.menu({menu_items},{thread}),', 1)
-    replacement += f'if({result}._tag!==`Failure`&&__t3PersistedRuntime.isAction({result}.value)){{await __t3PersistedRuntime.handle({result}.value,{thread});return}}'
-    sidebar = replace_once(sidebar, menu[0], replacement, 'Persisted thread menu')
+    sidebar = patch_thread_menu(sidebar)
     selected = match_one(r'([\w$]+)\.hasSelection\(\)&&\1.selectedThreadKeys.has', sidebar, 'single selected thread menu')
     sidebar = replace_once(sidebar, selected[0], selected[0].replace('.hasSelection()', '.selectedThreadKeys.size>1'), 'single selected thread support')
     # Resolve custom targets before T3 applies its native lifecycle operations.
@@ -159,11 +156,7 @@ def patch_modern(source, match_one, replace_once):
         'case`persisted-placeholder`:' + push + '.push((0,' + jsx + '.jsx)(' + native_marker + ',{marker:`persisted-placeholder`,className:`px-2 py-2 text-xs text-sidebar-muted-foreground`,children:`Right-click a thread to move it here.`}));break ' + label + ';'
     )
     sidebar = replace_once(sidebar, switch[0], switch[0] + cases, 'Persisted native markers')
-    menu = match_one(r'([\w$]+)=await ([\w$]+)\(\(\)=>([\w$]+)\.contextMenu.show\((([\w$]+)\(\{canOperate:.*?branch:([\w$]+)\.branch.*?snoozePresets:[\w$]+\}\)),([\w$]+)\)\);', sidebar, 'native thread menu', re.S)
-    result, _, _, menu_items, _, thread, _ = menu.groups()
-    replacement = menu[0].replace(f'.show({menu_items},', f'.show(__t3PersistedRuntime.menu({menu_items},{thread}),', 1)
-    replacement += f'if({result}._tag!==`Failure`&&__t3PersistedRuntime.isAction({result}.value)){{await __t3PersistedRuntime.handle({result}.value,{thread});return}}'
-    sidebar = replace_once(sidebar, menu[0], replacement, 'Persisted thread menu')
+    sidebar = patch_thread_menu(sidebar)
     selected = match_one(r'([\w$]+)\.hasSelection\(\)&&\1.selectedThreadKeys.has', sidebar, 'single selected thread menu')
     sidebar = replace_once(sidebar, selected[0], selected[0].replace('.hasSelection()', '.selectedThreadKeys.size>1'), 'single selected thread support')
     drag_end = match_one(r'let ([\w$]+)=String\(([\w$]+).active.id\),([\w$]+)=([\w$]+)\.get\(\1\),([\w$]+)=\2.over===null\?null:([\w$]+)\(([\w$]+),\1,String\(\2.over.id\)\),([\w$]+)=([\w$]+)\.get\(\1\);if\(\3===void 0\|\|\5===null\|\|\8===void 0\)return;', sidebar, 'native drop handler')
@@ -173,8 +166,7 @@ def patch_modern(source, match_one, replace_once):
     sidebar = replace_once(sidebar, collision[0], f'return {collision[1]}!==null&&({collision[1]}.section===`persisted`||{collision[2]})', 'Persisted collision plan')
     clamp = match_one(r'if\(([\w$]+)&&([\w$]+)\)\{let [\w$]+=[\w$]+.getBoundingClientRect\(\).*?else ([\w$]+).current=0;', sidebar, 'native drag bounds', re.S)
     sidebar = replace_once(sidebar, clamp[0], clamp[0].replace(f'if({clamp[1]}&&{clamp[2]}){{', f'if({section}!==`persisted`&&{clamp[1]}&&{clamp[2]}){{', 1), 'Persisted drag bounds')
-    empty = match_one(r'([\w$]+\.length\+[\w$]+\.length\+[\w$]+\.length\+[\w$]+\.length\+[\w$]+===0)\?', sidebar, 'empty sidebar message')
-    sidebar = replace_once(sidebar, empty[0], '__t3PersistedRows.length+' + empty[0], 'empty sidebar message')
+    sidebar = patch_empty_sidebar(sidebar)
     source = source[:start] + sidebar + source[end:]
     strategy = match_one(r'([\w$]+)\(\{items:' + re.escape(item_list) + r',enabled:', sidebar, 'native sort strategy')[1]
     a = source.index('function ' + strategy + '(')

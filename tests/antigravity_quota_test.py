@@ -28,6 +28,70 @@ class QuotaTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'quota selection integration point'):
                     patch(source.replace('summary.length ? summary', 'summary.length > 1 ? summary'))
 
+    def test_upstream_endpoint_fix_is_preserved(self):
+        from antigravity_quota import patch_sequential_endpoints
+        source = """const responses = yield* forEach(endpoints, (endpoint) => gen(function* () {
+            return yield* request(endpoint);
+        }), { concurrency: "unbounded" });
+        const windows = new Map();
+        for (const window of responses.flat()) if (!windows.has(window.id)) windows.set(window.id, window);
+        return [...windows.values()];"""
+        self.assertEqual(patch_sequential_endpoints(source), source)
+        with self.assertRaisesRegex(ValueError, 'quota endpoint selection'):
+            patch_sequential_endpoints(source.replace('!windows.has', 'windows.has'))
+
+    def test_legacy_endpoint_merge_is_still_repaired(self):
+        from antigravity_quota import patch_sequential_endpoints
+        legacy = """const responses = yield* forEach(ENDPOINTS, (endpoint) => gen(function* () {
+            return yield* request(endpoint);
+        }), { concurrency: "unbounded" });
+        const windows = new Map();
+        for (const window of responses.flat()) {
+            const previous = windows.get(window.id);
+            if (!previous || window.usedPercent > previous.usedPercent) windows.set(window.id, window);
+        }
+        return [...windows.values()];"""
+        script = """
+const assert = require('node:assert/strict');
+const ENDPOINTS = ['primary','fallback'];
+let results = [[{id:'gemini-weekly',usedPercent:0.05}], [{id:'gemini-weekly',usedPercent:1}]];
+let calls = 0;
+function* request(endpoint) {calls++; return results[ENDPOINTS.indexOf(endpoint)];}
+function* fetch() { BODY }
+assert.equal(fetch().next().value[0].usedPercent,0.05);
+assert.equal(calls,1);
+calls=0; results[0]=[];
+assert.equal(fetch().next().value[0].usedPercent,1);
+assert.equal(calls,2);
+""".replace('BODY', patch_sequential_endpoints(legacy))
+        result = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_partial_summary_still_needs_model_supplement(self):
+        from antigravity_quota import patch, HELPER
+        archive = Archive('/opt/t3code-nightly-bin/resources/app.asar')
+        source = next(archive.read(name).decode() for name in archive.entries
+                      if name.startswith('apps/server/dist/') and name.endswith('.mjs')
+                      and b'// src/provider/antigravityUsageLimits.ts' in archive.read(name))
+        def selection(text):
+            start = text.index('const summary = yield* fetchWindows("retrieveUserQuotaSummary"')
+            end = text.index('if (windows.length', start)
+            return text[start:end]
+        script = """
+const assert = require('node:assert/strict');
+const antigravitySummaryWindows = x=>x;
+function* fetchWindows(operation) {
+  return operation === 'retrieveUserQuotaSummary' ? [{id:'3p-weekly'}] : [{id:'gemini-quota'}];
+}
+HELPER
+function* original() { ORIGINAL; return windows; }
+function* customized() { CUSTOMIZED; return windows; }
+assert.equal(original().next().value.length,1,'Upstream still skips models when summary has only shared quotas');
+assert.equal(customized().next().value.length,2,'Keep the missing Gemini family visible');
+""".replace('HELPER', HELPER).replace('ORIGINAL', selection(source)).replace('CUSTOMIZED', selection(patch(source)))
+        result = subprocess.run(['node', '-e', script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_routine_build_changes_do_not_require_an_adapter_update(self):
         from antigravity_quota import patch
         from js_templates import TOKEN
@@ -52,8 +116,11 @@ class QuotaTest(unittest.TestCase):
                 elif variant == 'quotes':
                     changed = changed.replace('"fetchAvailableModels"', "'fetchAvailableModels'")
                 else:
-                    changed = changed.replace('window.usedPercent > previous.usedPercent',
-                                              'window.usedPercent < previous.usedPercent')
+                    if 'if (!windows.has(window.id))' in changed:
+                        changed = changed.replace('if (!windows.has(window.id))', 'if (windows.has(window.id))')
+                    else:
+                        changed = changed.replace('window.usedPercent > previous.usedPercent',
+                                                  'window.usedPercent < previous.usedPercent')
                     with self.assertRaisesRegex(ValueError, 'quota endpoint selection'):
                         patch(changed)
                     continue
@@ -75,11 +142,12 @@ class QuotaTest(unittest.TestCase):
             from antigravity_quota import patch
             source = patch(source)
         self.assertTrue('antigravity/hub/2.28.2' in source, 'Old Hub version suppresses Gemini and Argon summary buckets')
-        self.assertFalse('const responses = yield* forEach(ENDPOINTS' in source,
-                         'Use the first usable endpoint instead of mixing differing quota reports')
-        start = source.index('function quotaWindow(')
-        end = source.index('const makeAntigravityUsageProbe', start)
-        functions = source[start:end]
+        upstream_first_wins = 'if (!windows.has(window.id))' in source
+        # Extract only pure quota transformations. Other top-level helpers may
+        # initialize authentication or Effect services and belong to the real app.
+        pure = re.finditer(r'^function (?:antigravityUserAgent|quotaWindow|summaryResetTime|summaryWindows|modelWindows|mergeQuotaWindows)\(', source, re.M)
+        functions = '\n'.join(source[match.start():source.index('\n}', match.start()) + 2]
+                              for match in pure)
         start = source.index('const summary = yield* fetchWindows("retrieveUserQuotaSummary"')
         end = source.index('\n\t\t\tif (windows.length', start)
         selection = source[start:end]
@@ -89,6 +157,7 @@ class QuotaTest(unittest.TestCase):
         script = '''
 const assert = require('node:assert/strict');
 const iso$1 = value => value;
+const antigravitySummaryWindows = value => value;
 const SUMMARY_WINDOW_MINS = new Map([['5h',300],['weekly',10080]]);
 FUNCTIONS
 const summary = {groups:[{buckets:[
@@ -129,6 +198,10 @@ assert.equal(windows.find(w => w.id === 'gemini-weekly').kind,'weekly');
 assert.equal(windows.find(w => w.id === 'gemini-5h').windowDurationMins,300);
 
 const ENDPOINTS = ['primary','fallback'];
+const endpoints = ENDPOINTS;
+const gen$1 = f => f();
+function* forEach(items, f) {const output=[]; for (const item of items) output.push(yield* f(item)); return output;}
+const upstreamFirstWins = UPSTREAM_FIRST_WINS;
 const accessToken = 'synthetic';
 const platform = 'linux', architecture = 'x64';
 const token = {};
@@ -142,13 +215,13 @@ function request(req) {return {pipe(){return (function*(){calls.push(req.url);re
 FETCHING
 let selected = fetchWindows('retrieveUserQuotaSummary',x=>x).next().value;
 assert.equal(selected[0].usedPercent,0.05,'Primary endpoint must stay authoritative');
-assert.equal(calls.length,1,'Do not query fallback after primary succeeds');
+assert.equal(calls.length,upstreamFirstWins ? 2 : 1,'Preserve upstream endpoint requests when it already honors endpoint priority');
 calls=[]; results=[[],[{id:'gemini-weekly',usedPercent:1}]];
 selected = fetchWindows('retrieveUserQuotaSummary',x=>x).next().value;
 assert.equal(selected[0].usedPercent,1);
 assert.equal(calls.length,2,'Empty primary must fall back');
 console.log('Quota selection regression checks passed');
-'''.replace('FUNCTIONS', functions).replace('SELECTION', selection).replace('FETCHING', fetching)
+'''.replace('FUNCTIONS', functions).replace('SELECTION', selection).replace('FETCHING', fetching).replace('UPSTREAM_FIRST_WINS', str(upstream_first_wins).lower())
         # Stub the imported operations under the aliases in this installed build.
         # Local names in the extracted probe stay unchanged.
         aliases = {'post': 'post$1', 'setHeaders': 'setHeaders$1', 'flatMap': 'flatMap$1',
